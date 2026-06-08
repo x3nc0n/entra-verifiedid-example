@@ -12,10 +12,6 @@ param azureTenantId string
 @description('App registration client ID.')
 param azureClientId string
 
-@description('App registration client secret (stored in Key Vault; passed here for initial seeding).')
-@secure()
-param azureClientSecret string
-
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string
 
@@ -27,10 +23,6 @@ param credentialType string
 
 @description('IdentityPass endpoint URL.')
 param identityPassEndpoint string
-
-@description('IdentityPass subscription key.')
-@secure()
-param identityPassSubscriptionKey string
 
 @description('FIDO2 relying party display name.')
 param fido2RpName string
@@ -52,6 +44,12 @@ param appInsightsInstrumentationKey string = ''
 
 @description('Key Vault URI (set after Key Vault module runs).')
 param keyVaultUrl string = ''
+
+@description('Key Vault secret name for the app client secret.')
+param clientSecretKvName string = 'azure-client-secret'
+
+@description('Key Vault secret name for the IdentityPass subscription key.')
+param identityPassKeyKvName string = 'identitypass-key'
 
 // ── Variables ──────────────────────────────────────────────────────────────────
 
@@ -105,12 +103,15 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'NODE_ENV', value: 'production' }
         { name: 'AZURE_TENANT_ID', value: azureTenantId }
         { name: 'AZURE_CLIENT_ID', value: azureClientId }
-        { name: 'AZURE_CLIENT_SECRET', value: azureClientSecret }
+        // Secrets loaded from Key Vault via managed identity — never stored as plaintext app settings.
+        // The bootstrap script (scripts/bootstrap.ps1) seeds these secrets into Key Vault.
+        // Key Vault reference format: @Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<name>/)
+        { name: 'AZURE_CLIENT_SECRET', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${clientSecretKvName}/)' : '' }
         { name: 'VERIFIED_ID_AUTHORITY', value: verifiedIdAuthority }
         { name: 'CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
         { name: 'CREDENTIAL_TYPE', value: credentialType }
         { name: 'IDENTITYPASS_ENDPOINT', value: identityPassEndpoint }
-        { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', value: identityPassSubscriptionKey }
+        { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${identityPassKeyKvName}/)' : '' }
         { name: 'FIDO2_RP_NAME', value: fido2RpName }
         { name: 'FIDO2_RP_ID', value: fido2RpId }
         { name: 'FIDO2_ORIGIN', value: fido2Origin }

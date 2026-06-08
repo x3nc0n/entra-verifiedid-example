@@ -16,10 +16,6 @@ param azureTenantId string
 @description('App registration client ID.')
 param azureClientId string
 
-@description('App registration client secret.')
-@secure()
-param azureClientSecret string
-
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string
 
@@ -31,10 +27,6 @@ param credentialType string = 'VerifiedEmployee'
 
 @description('IdentityPass endpoint URL.')
 param identityPassEndpoint string = ''
-
-@description('IdentityPass subscription key.')
-@secure()
-param identityPassSubscriptionKey string = ''
 
 @description('FIDO2 relying party display name.')
 param fido2RpName string = 'Entra Verified ID Demo'
@@ -73,12 +65,10 @@ module appService 'modules/app-service.bicep' = {
     appName: appName
     azureTenantId: azureTenantId
     azureClientId: azureClientId
-    azureClientSecret: azureClientSecret
     verifiedIdAuthority: verifiedIdAuthority
     credentialManifestUrl: credentialManifestUrl
     credentialType: credentialType
     identityPassEndpoint: identityPassEndpoint
-    identityPassSubscriptionKey: identityPassSubscriptionKey
     fido2RpName: fido2RpName
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin
@@ -94,12 +84,12 @@ module keyVault 'modules/keyvault.bicep' = {
     location: location
     appName: appName
     webAppPrincipalId: appService.outputs.principalId
-    azureClientSecret: azureClientSecret
-    identityPassSubscriptionKey: identityPassSubscriptionKey
   }
 }
 
 // ── Update web app with Key Vault URI (requires keyvault to exist first) ───────
+// Second pass adds the Key Vault URL so app settings can use KV references
+// for secrets (AZURE_CLIENT_SECRET, IDENTITYPASS_SUBSCRIPTION_KEY).
 module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
   name: 'appServiceKeyVaultUpdate'
   params: {
@@ -107,12 +97,10 @@ module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
     appName: appName
     azureTenantId: azureTenantId
     azureClientId: azureClientId
-    azureClientSecret: azureClientSecret
     verifiedIdAuthority: verifiedIdAuthority
     credentialManifestUrl: credentialManifestUrl
     credentialType: credentialType
     identityPassEndpoint: identityPassEndpoint
-    identityPassSubscriptionKey: identityPassSubscriptionKey
     fido2RpName: fido2RpName
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin

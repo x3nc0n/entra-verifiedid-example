@@ -9,14 +9,6 @@ param appName string
 @description('Principal ID of the web app managed identity.')
 param webAppPrincipalId string
 
-@description('Azure AD client secret to seed.')
-@secure()
-param azureClientSecret string
-
-@description('IdentityPass subscription key to seed.')
-@secure()
-param identityPassSubscriptionKey string
-
 // ── Variables ──────────────────────────────────────────────────────────────────
 
 var kvName = '${appName}-kv-${uniqueString(resourceGroup().id)}'
@@ -42,25 +34,31 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     softDeleteRetentionInDays: 7
     enableSoftDelete: true
     enablePurgeProtection: true
-    accessPolicies: [
-      {
-        tenantId: subscription().tenantId
-        objectId: webAppPrincipalId
-        permissions: {
-          secrets: ['get', 'list']
-        }
-      }
-    ]
+    enableRbacAuthorization: true
   }
 }
 
-// ── Secrets ────────────────────────────────────────────────────────────────────
+// Grant the web app's managed identity Key Vault Secrets User role
+// This replaces access policies — RBAC is the recommended model
+resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, webAppPrincipalId, 'Key Vault Secrets User')
+  scope: keyVault
+  properties: {
+    principalId: webAppPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
+  }
+}
+
+// ── Placeholder Secrets ────────────────────────────────────────────────────────
+// Created as empty placeholders so Key Vault references in App Service don't 404.
+// The bootstrap script (scripts/bootstrap.ps1) populates these with real values.
 
 resource clientSecretKvEntry 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'azure-client-secret'
   properties: {
-    value: azureClientSecret
+    value: 'PLACEHOLDER--run-bootstrap-to-set'
     attributes: {
       enabled: true
     }
@@ -71,7 +69,7 @@ resource identityPassKeyEntry 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'identitypass-key'
   properties: {
-    value: identityPassSubscriptionKey
+    value: 'PLACEHOLDER--run-bootstrap-to-set'
     attributes: {
       enabled: true
     }
