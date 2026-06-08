@@ -1,0 +1,149 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step active">5. Passkeys</span>
+      </div>
+      <h1 class="page-title">Register Passkeys</h1>
+      <p class="page-subtitle">Register at least one passkey to complete phishing-resistant MFA setup. You can register both for redundancy.</p>
+    </div>
+
+    <div id="globalError" class="alert alert-error hidden" role="alert"></div>
+    <div id="globalSuccess" class="alert alert-success hidden" role="status"></div>
+
+    <div class="passkey-grid">
+
+      <!-- Phone / Platform Passkey -->
+      <div class="card passkey-card" id="platformCard">
+        <div class="passkey-card-header">
+          <span class="passkey-icon" aria-hidden="true">📱</span>
+          <h2 class="passkey-card-title">Register Phone Passkey</h2>
+        </div>
+        <p class="passkey-card-desc">
+          Register a <strong>platform authenticator</strong> using your device's built-in
+          biometrics — Face ID, Touch ID, Windows Hello, or fingerprint sensor.
+        </p>
+        <ul class="passkey-feature-list">
+          <li>Bound to this device</li>
+          <li>Uses biometric unlock</li>
+          <li>Fastest sign-in experience</li>
+        </ul>
+        <div class="passkey-status" id="platformStatus">
+          <% if (passkeyPhone) { %>
+            <span class="status-registered">&#10003; Registered</span>
+          <% } else { %>
+            <span class="status-not-registered">&#9675; Not registered</span>
+          <% } %>
+        </div>
+        <button
+          class="btn btn-primary"
+          id="registerPlatformBtn"
+          onclick="registerPasskey('platform')"
+          <%- passkeyPhone ? 'disabled' : '' %>
+        >
+          <%- passkeyPhone ? 'Already Registered' : 'Register Phone Passkey' %>
+        </button>
+      </div>
+
+      <!-- YubiKey / Cross-platform -->
+      <div class="card passkey-card" id="crossPlatformCard">
+        <div class="passkey-card-header">
+          <span class="passkey-icon" aria-hidden="true">🔑</span>
+          <h2 class="passkey-card-title">Register YubiKey</h2>
+        </div>
+        <p class="passkey-card-desc">
+          Register a <strong>hardware security key</strong> (YubiKey or compatible FIDO2
+          token) for the highest level of phishing resistance.
+        </p>
+        <ul class="passkey-feature-list">
+          <li>Physical hardware token</li>
+          <li>Works on any device</li>
+          <li>Gold standard for security</li>
+        </ul>
+        <div class="passkey-status" id="crossPlatformStatus">
+          <% if (passkeyYubikey) { %>
+            <span class="status-registered">&#10003; Registered</span>
+          <% } else { %>
+            <span class="status-not-registered">&#9675; Not registered</span>
+          <% } %>
+        </div>
+        <button
+          class="btn btn-primary"
+          id="registerCrossPlatformBtn"
+          onclick="registerPasskey('cross-platform')"
+          <%- passkeyYubikey ? 'disabled' : '' %>
+        >
+          <%- passkeyYubikey ? 'Already Registered' : 'Register YubiKey' %>
+        </button>
+      </div>
+
+    </div><!-- /.passkey-grid -->
+
+    <div class="passkey-complete-section" id="completeSection">
+      <% if (passkeyPhone || passkeyYubikey) { %>
+        <a href="/passkey/complete" class="btn btn-success btn-large" id="completeBtn">
+          Complete Onboarding &rarr;
+        </a>
+      <% } else { %>
+        <button class="btn btn-success btn-large" id="completeBtn" disabled>
+          Complete Onboarding &mdash; register at least one key first
+        </button>
+      <% } %>
+    </div>
+
+    <div class="info-box mt-md">
+      <h3>🔒 About passkeys</h3>
+      <ul>
+        <li>Passkeys replace passwords with public-key cryptography — they can't be phished.</li>
+        <li>Your private key never leaves this device (platform) or your hardware key (YubiKey).</li>
+        <li>Registering both provides a backup if one is unavailable.</li>
+      </ul>
+    </div>
+
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="/js/main.js"></script>
+<script>
+// Initial state from server
+var _registered = {
+  platform: <%- passkeyPhone ? 'true' : 'false' %>,
+  'cross-platform': <%- passkeyYubikey ? 'true' : 'false' %>,
+};
+
+function _onPasskeySuccess(type) {
+  _registered[type] = true;
+
+  var statusId = type === 'platform' ? 'platformStatus' : 'crossPlatformStatus';
+  document.getElementById(statusId).innerHTML =
+    '<span class="status-registered">&#10003; Registered</span>';
+
+  var btnId = type === 'platform' ? 'registerPlatformBtn' : 'registerCrossPlatformBtn';
+  var btn = document.getElementById(btnId);
+  btn.disabled = true;
+  btn.textContent = 'Already Registered';
+
+  var msg = (type === 'platform' ? 'Phone passkey' : 'YubiKey') + ' registered successfully!';
+  var successEl = document.getElementById('globalSuccess');
+  successEl.textContent = msg;
+  successEl.classList.remove('hidden');
+  setTimeout(function () { successEl.classList.add('hidden'); }, 5000);
+
+  // Unlock complete button
+  var section = document.getElementById('completeSection');
+  section.innerHTML =
+    '<a href="/passkey/complete" class="btn btn-success btn-large">Complete Onboarding &rarr;</a>';
+}
+</script>

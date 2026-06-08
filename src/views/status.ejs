@@ -1,0 +1,94 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step active">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">5. Passkeys</span>
+      </div>
+      <h1 class="page-title">Awaiting Manager Approval</h1>
+      <p class="page-subtitle">
+        Your onboarding request has been submitted. Your manager will receive a
+        notification and must approve before you can continue.
+      </p>
+    </div>
+
+    <div class="card status-panel" id="statusPanel">
+      <div class="status-spinner-wrap">
+        <div class="spinner spinner-lg" id="statusSpinner" aria-label="Waiting for approval"></div>
+        <div class="status-check-icon hidden" id="statusCheckIcon" aria-hidden="true">&#10003;</div>
+      </div>
+      <p class="status-label" id="statusLabel">Waiting for manager approval&hellip;</p>
+      <p class="status-hint">This page polls automatically every few seconds — you don't need to refresh.</p>
+      <div id="statusError" class="alert alert-error hidden" role="alert"></div>
+    </div>
+
+    <% if (typeof user !== 'undefined' && user) { %>
+    <div class="card submission-summary mt-md">
+      <h2 class="card-section-title">Submission Details</h2>
+      <dl class="details-list">
+        <dt>Personal Email</dt>
+        <dd><%= user.email %></dd>
+        <dt>Employee ID</dt>
+        <dd><%= user.employeeId %></dd>
+        <% if (typeof requestId !== 'undefined' && requestId) { %>
+        <dt>Request ID</dt>
+        <dd><code><%= requestId %></code></dd>
+        <% } %>
+      </dl>
+    </div>
+    <% } %>
+
+    <div class="info-box mt-md">
+      <h3>&#128338; What happens next?</h3>
+      <ul>
+        <li>Your manager receives an email via IdentityPass with a one-click approval link.</li>
+        <li>Once approved, this page will automatically advance to the credential issuance step.</li>
+        <li>If you don't hear back within 24 hours, contact your manager directly.</li>
+      </ul>
+    </div>
+
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script>
+(function startApprovalPoll() {
+  var pollInterval = setInterval(async function () {
+    try {
+      var resp = await fetch('/onboarding/approval-status');
+      if (!resp.ok) return;
+      var data = await resp.json();
+
+      if (data.status === 'error') {
+        document.getElementById('statusError').textContent =
+          data.message || 'An error occurred while checking approval status.';
+        document.getElementById('statusError').classList.remove('hidden');
+        return;
+      }
+
+      if (data.approved) {
+        clearInterval(pollInterval);
+        document.getElementById('statusSpinner').classList.add('hidden');
+        document.getElementById('statusCheckIcon').classList.remove('hidden');
+        document.getElementById('statusLabel').textContent =
+          'Approved! Advancing to credential issuance\u2026';
+        setTimeout(function () {
+          window.location.href = '/onboarding/approved';
+        }, 1500);
+      }
+    } catch (_) {
+      // Silently retry — transient network errors should not interrupt the UI
+    }
+  }, 3000);
+})();
+</script>

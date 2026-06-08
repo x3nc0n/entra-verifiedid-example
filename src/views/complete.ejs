@@ -1,0 +1,88 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">5. Passkeys</span>
+      </div>
+    </div>
+
+    <div class="card complete-panel">
+      <div class="complete-icon" aria-hidden="true">&#128737;&#65039;</div>
+      <h1 class="complete-title">You're all set!</h1>
+      <p class="complete-subtitle">
+        Your identity has been verified and phishing-resistant authentication is configured.
+        You can now sign in without a password.
+      </p>
+    </div>
+
+    <div class="card mt-md">
+      <h2 class="card-section-title">What was configured</h2>
+      <ul class="completed-list">
+        <li class="completed-item">
+          &#10003;&nbsp; <strong>Identity verified</strong> via Microsoft Entra Verified ID
+        </li>
+        <li class="completed-item">
+          &#10003;&nbsp; <strong>Manager approval</strong> completed via IdentityPass
+        </li>
+        <% if (passkeyPhone && passkeyYubikey) { %>
+        <li class="completed-item">
+          &#10003;&nbsp; <strong>Passkeys registered</strong> &mdash; Phone passkey &amp; YubiKey hardware token
+        </li>
+        <% } else if (passkeyPhone) { %>
+        <li class="completed-item">
+          &#10003;&nbsp; <strong>Passkey registered</strong> &mdash; Phone passkey (platform authenticator)
+        </li>
+        <% } else if (passkeyYubikey) { %>
+        <li class="completed-item">
+          &#10003;&nbsp; <strong>Passkey registered</strong> &mdash; YubiKey hardware token
+        </li>
+        <% } %>
+      </ul>
+
+      <% if (typeof user !== 'undefined' && user) { %>
+      <dl class="details-list mt-md">
+        <dt>Employee ID</dt>
+        <dd><%= user.employeeId %></dd>
+        <dt>Email</dt>
+        <dd><%= user.email %></dd>
+      </dl>
+      <% } %>
+    </div>
+
+    <div class="card mt-md">
+      <h2 class="card-section-title">Next Steps</h2>
+      <ol class="next-steps-list">
+        <li>Sign in to the corporate portal using your new passkey — no password required.</li>
+        <li>If you registered a YubiKey, store it somewhere safe and keep a backup with IT.</li>
+        <li>Contact IT Help Desk if you need to register additional devices or replace a lost key.</li>
+        <li>
+          Review the
+          <a
+            href="https://learn.microsoft.com/en-us/entra/identity/authentication/howto-authentication-passwordless-security-key"
+            target="_blank"
+            rel="noopener"
+          >FIDO2 security key documentation</a>
+          for guidance on managing your credentials.
+        </li>
+      </ol>
+    </div>
+
+    <div class="complete-actions mt-md">
+      <a href="/" class="btn btn-secondary">Return to Home</a>
+    </div>
+
+  </div>
+</main>
+
+<%- include('partials/footer') %>
