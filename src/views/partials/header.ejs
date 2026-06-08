@@ -1,0 +1,22 @@
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="/" class="brand">
+      <span class="brand-logo" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="13" height="13" fill="#F25022"/>
+          <rect x="15" width="13" height="13" fill="#7FBA00"/>
+          <rect y="15" width="13" height="13" fill="#00A4EF"/>
+          <rect x="15" y="15" width="13" height="13" fill="#FFB900"/>
+        </svg>
+      </span>
+      <span class="brand-name">Entra Verified ID</span>
+    </a>
+    <nav class="site-nav">
+      <a href="/" class="nav-link">Home</a>
+      <a href="/onboarding" class="nav-link">Onboard</a>
+    </nav>
+    <% if (typeof demoMode !== 'undefined' && demoMode) { %>
+      <span class="demo-badge">Demo Mode</span>
+    <% } %>
+  </div>
+</header>

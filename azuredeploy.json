@@ -1,0 +1,358 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Entra Verified ID Employee/Guest Onboarding Demo Portal — Deploy to Azure",
+    "_generator": {
+      "name": "bicep",
+      "templateHash": "entra-verifiedid-example"
+    }
+  },
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "entra-vid",
+      "minLength": 3,
+      "maxLength": 20,
+      "metadata": {
+        "description": "Application name prefix used for resource naming (3–20 alphanumeric/hyphen chars)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources."
+      }
+    },
+    "azureTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AD / Entra tenant ID."
+      }
+    },
+    "azureClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "App registration (service principal) client ID."
+      }
+    },
+    "azureClientSecret": {
+      "type": "securestring",
+      "metadata": {
+        "description": "App registration client secret."
+      }
+    },
+    "verifiedIdAuthority": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra Verified ID authority DID (did:web:… or did:ion:…)."
+      }
+    },
+    "credentialManifestUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "URL of the credential manifest JSON for the issued credential type."
+      }
+    },
+    "credentialType": {
+      "type": "string",
+      "defaultValue": "VerifiedEmployee",
+      "metadata": {
+        "description": "Credential type name matching the manifest (e.g. VerifiedEmployee)."
+      }
+    },
+    "identityPassEndpoint": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "IdentityPass REST API endpoint URL (optional)."
+      }
+    },
+    "identityPassSubscriptionKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "IdentityPass subscription / API key (optional)."
+      }
+    },
+    "fido2RpName": {
+      "type": "string",
+      "defaultValue": "Entra Verified ID Demo",
+      "metadata": {
+        "description": "FIDO2 relying party display name."
+      }
+    },
+    "fido2RpId": {
+      "type": "string",
+      "metadata": {
+        "description": "FIDO2 relying party ID — must match the app's domain (e.g. contoso.azurewebsites.net)."
+      }
+    },
+    "fido2Origin": {
+      "type": "string",
+      "metadata": {
+        "description": "FIDO2 allowed origin including scheme (e.g. https://contoso.azurewebsites.net)."
+      }
+    },
+    "demoMode": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable demo mode (relaxed auth checks for demonstration purposes)."
+      }
+    }
+  },
+  "variables": {
+    "planName": "[concat(parameters('appName'), '-plan')]",
+    "webAppName": "[concat(parameters('appName'), '-app')]",
+    "lawName": "[concat(parameters('appName'), '-law')]",
+    "appInsightsName": "[concat(parameters('appName'), '-ai')]",
+    "saName": "[take(toLower(concat(replace(parameters('appName'), '-', ''), uniqueString(resourceGroup().id))), 24)]",
+    "kvSuffix": "[uniqueString(resourceGroup().id)]",
+    "kvNameRaw": "[concat(parameters('appName'), '-kv-', variables('kvSuffix'))]",
+    "kvName": "[if(greater(length(variables('kvNameRaw')), 24), substring(variables('kvNameRaw'), 0, 24), variables('kvNameRaw'))]",
+    "tags": {
+      "project": "entra-verifiedid-example",
+      "environment": "demo"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('lawName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "web",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ],
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]",
+        "RetentionInDays": 30,
+        "IngestionMode": "LogAnalytics",
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('saName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true,
+        "accessTier": "Hot"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('saName'), '/default/artifacts')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('saName'))]"
+      ],
+      "properties": {
+        "publicAccess": "None"
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('planName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "B1",
+        "tier": "Basic"
+      },
+      "kind": "linux",
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('webAppName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "app,linux",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "linuxFxVersion": "NODE|20-lts",
+          "http20Enabled": true,
+          "minTlsVersion": "1.2",
+          "ftpsState": "Disabled",
+          "healthCheckPath": "/health",
+          "appSettings": [
+            { "name": "WEBSITE_NODE_DEFAULT_VERSION", "value": "~20" },
+            { "name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "true" },
+            { "name": "NODE_ENV", "value": "production" },
+            { "name": "AZURE_TENANT_ID", "value": "[parameters('azureTenantId')]" },
+            { "name": "AZURE_CLIENT_ID", "value": "[parameters('azureClientId')]" },
+            { "name": "AZURE_CLIENT_SECRET", "value": "[parameters('azureClientSecret')]" },
+            { "name": "VERIFIED_ID_AUTHORITY", "value": "[parameters('verifiedIdAuthority')]" },
+            { "name": "CREDENTIAL_MANIFEST_URL", "value": "[parameters('credentialManifestUrl')]" },
+            { "name": "CREDENTIAL_TYPE", "value": "[parameters('credentialType')]" },
+            { "name": "IDENTITYPASS_ENDPOINT", "value": "[parameters('identityPassEndpoint')]" },
+            { "name": "IDENTITYPASS_SUBSCRIPTION_KEY", "value": "[parameters('identityPassSubscriptionKey')]" },
+            { "name": "FIDO2_RP_NAME", "value": "[parameters('fido2RpName')]" },
+            { "name": "FIDO2_RP_ID", "value": "[parameters('fido2RpId')]" },
+            { "name": "FIDO2_ORIGIN", "value": "[parameters('fido2Origin')]" },
+            { "name": "DEMO_MODE", "value": "[string(parameters('demoMode'))]" },
+            { "name": "APPINSIGHTS_INSTRUMENTATIONKEY", "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]" },
+            { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).ConnectionString]" },
+            { "name": "ApplicationInsightsAgent_EXTENSION_VERSION", "value": "~3" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('kvName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('webAppName'))]"
+      ],
+      "properties": {
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "tenantId": "[subscription().tenantId]",
+        "softDeleteRetentionInDays": 7,
+        "enableSoftDelete": true,
+        "enablePurgeProtection": true,
+        "accessPolicies": [
+          {
+            "tenantId": "[subscription().tenantId]",
+            "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('webAppName')), '2023-01-01', 'Full').identity.principalId]",
+            "permissions": {
+              "secrets": ["get", "list"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[concat(variables('kvName'), '/azure-client-secret')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
+      ],
+      "properties": {
+        "value": "[parameters('azureClientSecret')]",
+        "attributes": {
+          "enabled": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[concat(variables('kvName'), '/identitypass-key')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
+      ],
+      "properties": {
+        "value": "[parameters('identityPassSubscriptionKey')]",
+        "attributes": {
+          "enabled": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2023-01-01",
+      "name": "[concat(variables('webAppName'), '/appsettings')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
+      ],
+      "properties": {
+        "WEBSITE_NODE_DEFAULT_VERSION": "~20",
+        "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
+        "NODE_ENV": "production",
+        "AZURE_TENANT_ID": "[parameters('azureTenantId')]",
+        "AZURE_CLIENT_ID": "[parameters('azureClientId')]",
+        "AZURE_CLIENT_SECRET": "[parameters('azureClientSecret')]",
+        "VERIFIED_ID_AUTHORITY": "[parameters('verifiedIdAuthority')]",
+        "CREDENTIAL_MANIFEST_URL": "[parameters('credentialManifestUrl')]",
+        "CREDENTIAL_TYPE": "[parameters('credentialType')]",
+        "IDENTITYPASS_ENDPOINT": "[parameters('identityPassEndpoint')]",
+        "IDENTITYPASS_SUBSCRIPTION_KEY": "[parameters('identityPassSubscriptionKey')]",
+        "FIDO2_RP_NAME": "[parameters('fido2RpName')]",
+        "FIDO2_RP_ID": "[parameters('fido2RpId')]",
+        "FIDO2_ORIGIN": "[parameters('fido2Origin')]",
+        "KEY_VAULT_URL": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName'))).vaultUri]",
+        "DEMO_MODE": "[string(parameters('demoMode'))]",
+        "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).ConnectionString]",
+        "ApplicationInsightsAgent_EXTENSION_VERSION": "~3"
+      }
+    }
+  ],
+  "outputs": {
+    "webAppName": {
+      "type": "string",
+      "value": "[variables('webAppName')]"
+    },
+    "webAppUrl": {
+      "type": "string",
+      "value": "[concat('https://', reference(resourceId('Microsoft.Web/sites', variables('webAppName'))).defaultHostName)]"
+    },
+    "keyVaultUri": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName'))).vaultUri]"
+    },
+    "appInsightsInstrumentationKey": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[variables('saName')]"
+    },
+    "deployToAzureButton": {
+      "type": "string",
+      "value": "[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)"
+    }
+  }
+}

@@ -1,0 +1,126 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write  # Allow posting validation summary comments
+
+jobs:
+  # ── Job 1: Lint & Test ────────────────────────────────────────────────────────
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+  # ── Job 2: Bicep Validation ───────────────────────────────────────────────────
+  bicep-validate:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: |
+          curl -Lo bicep \
+            https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Build Bicep (lint & compile check)
+        run: bicep build infra/main.bicep --outfile /dev/null
+
+      - name: Validate ARM template JSON
+        run: |
+          python3 -c "
+          import json, sys
+          try:
+              with open('azuredeploy.json') as f:
+                  data = json.load(f)
+              schema = data.get('\$schema', '')
+              if 'deploymentTemplate' not in schema:
+                  print('ERROR: Not a valid ARM template schema:', schema)
+                  sys.exit(1)
+              print('azuredeploy.json is valid ARM JSON')
+              print('Schema:', schema)
+              print('Resources:', len(data.get('resources', [])))
+          except json.JSONDecodeError as e:
+              print('ERROR: Invalid JSON:', e)
+              sys.exit(1)
+          "
+
+      - name: Check ARM template parameters
+        run: |
+          python3 -c "
+          import json
+          with open('azuredeploy.json') as f:
+              arm = json.load(f)
+          params = list(arm.get('parameters', {}).keys())
+          required = [
+              'appName','location','azureTenantId','azureClientId','azureClientSecret',
+              'verifiedIdAuthority','credentialManifestUrl','fido2RpId','fido2Origin'
+          ]
+          missing = [p for p in required if p not in params]
+          if missing:
+              print('ERROR: Missing required parameters:', missing)
+              exit(1)
+          print('All required parameters present:', len(params), 'total')
+          "
+
+  # ── Job 3: Security Scan ──────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=high
+        continue-on-error: false
+
+      - name: Check for secrets in diff
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --only-verified

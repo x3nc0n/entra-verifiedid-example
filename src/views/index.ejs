@@ -1,0 +1,89 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <section class="hero">
+    <div class="container">
+      <div class="hero-content">
+        <div class="hero-badge">Microsoft Entra Verified ID</div>
+        <h1 class="hero-title">Phishing-Resistant Employee Onboarding</h1>
+        <p class="hero-subtitle">
+          Experience how Microsoft uses Entra Verified ID and FIDO2 passkeys to onboard
+          employees with strong, verifiable identity assurance — no passwords required.
+        </p>
+        <a href="/onboarding" class="btn btn-primary btn-large">
+          Start Onboarding &rarr;
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="steps-section">
+    <div class="container">
+      <h2 class="section-title">How It Works</h2>
+      <div class="steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-icon">📋</div>
+          <h3 class="step-title">Enter Your Details</h3>
+          <p class="step-desc">Provide your personal email and employee ID to initiate the identity verification request.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-icon">✅</div>
+          <h3 class="step-title">Manager Approval</h3>
+          <p class="step-desc">Your manager receives an IdentityPass notification and approves the onboarding request.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-icon">🪪</div>
+          <h3 class="step-title">Get Your Credential</h3>
+          <p class="step-desc">Scan a QR code with Microsoft Authenticator to receive your Verified ID credential.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-icon">🔍</div>
+          <h3 class="step-title">Verify Your Identity</h3>
+          <p class="step-desc">Present your Verified ID credential to the portal to confirm your identity.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">5</div>
+          <div class="step-icon">🔑</div>
+          <h3 class="step-title">Register Passkeys</h3>
+          <p class="step-desc">Set up phishing-resistant MFA with a phone passkey and/or a YubiKey hardware token.</p>
+        </div>
+        <div class="step-card step-card-complete">
+          <div class="step-number">6</div>
+          <div class="step-icon">🛡️</div>
+          <h3 class="step-title">Onboarding Complete</h3>
+          <p class="step-desc">You're fully onboarded with phishing-resistant authentication — no passwords needed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tech-section">
+    <div class="container">
+      <h2 class="section-title">Technologies Used</h2>
+      <div class="tech-grid">
+        <div class="tech-card">
+          <strong>Entra Verified ID</strong>
+          <p>Decentralized identity credentials stored in Microsoft Authenticator</p>
+        </div>
+        <div class="tech-card">
+          <strong>IdentityPass</strong>
+          <p>Manager-in-the-loop identity proofing and approval workflow</p>
+        </div>
+        <div class="tech-card">
+          <strong>FIDO2 / WebAuthn</strong>
+          <p>Passkey registration for platform authenticators and hardware keys</p>
+        </div>
+        <div class="tech-card">
+          <strong>Microsoft Graph</strong>
+          <p>FIDO2 security key registration in Entra ID via Graph API</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<%- include('partials/footer') %>

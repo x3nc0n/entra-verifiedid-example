@@ -1,0 +1,132 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step active">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">5. Passkeys</span>
+      </div>
+      <h1 class="page-title">Verify Your Identity</h1>
+      <p class="page-subtitle">Present your <strong>Verified Employee</strong> credential to confirm your identity before setting up passkeys.</p>
+    </div>
+
+    <div class="two-col">
+      <div class="qr-panel card" id="verificationPanel">
+        <div class="qr-status-bar">
+          <span class="status-dot status-waiting" id="statusDot"></span>
+          <span id="statusText">Generating verification request…</span>
+        </div>
+        <div class="qr-container" id="qrContainer">
+          <div class="qr-placeholder" id="qrPlaceholder">
+            <div class="spinner"></div>
+          </div>
+        </div>
+        <div class="qr-actions hidden" id="qrActions">
+          <a href="#" id="qrLink" class="btn btn-secondary btn-small" target="_blank">Open in Authenticator</a>
+        </div>
+      </div>
+
+      <div class="instructions-panel">
+        <h2 class="instructions-title">How to present your credential</h2>
+        <ol class="instructions-list">
+          <li>Open <strong>Microsoft Authenticator</strong>.</li>
+          <li>Tap your <strong>Verified Employee</strong> credential card.</li>
+          <li>Tap <strong>Share</strong> and scan the QR code, <em>or</em> tap the link on this device.</li>
+          <li>Confirm the share request in Authenticator.</li>
+          <li>This page will advance automatically.</li>
+        </ol>
+        <div id="successMessage" class="alert alert-success hidden">
+          ✅ <strong>Identity verified!</strong> Advancing to passkey setup…
+        </div>
+        <div id="errorMessage" class="alert alert-error hidden"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+<script>
+(async function initVerification() {
+  let pollInterval = null;
+
+  function setStatus(text, type) {
+    document.getElementById('statusText').textContent = text;
+    document.getElementById('statusDot').className = 'status-dot status-' + type;
+  }
+
+  try {
+    setStatus('Creating verification request…', 'waiting');
+    const resp = await fetch('/api/verification/request', { method: 'POST' });
+    if (!resp.ok) throw new Error('Failed to create verification request.');
+    const data = await resp.json();
+
+    document.getElementById('qrPlaceholder').classList.add('hidden');
+    const qrContainer = document.getElementById('qrContainer');
+    const qrDiv = document.createElement('div');
+    qrDiv.id = 'qrCodeEl';
+    qrContainer.appendChild(qrDiv);
+
+    if (data.qrCode) {
+      const img = document.createElement('img');
+      img.src = 'data:image/png;base64,' + data.qrCode;
+      img.alt = 'Verification QR Code';
+      qrContainer.appendChild(img);
+    } else {
+      new QRCode(document.getElementById('qrCodeEl'), {
+        text: data.url,
+        width: 256,
+        height: 256,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    }
+
+    const link = document.getElementById('qrLink');
+    link.href = data.url;
+    document.getElementById('qrActions').classList.remove('hidden');
+    setStatus('Waiting for credential presentation…', 'waiting');
+
+    pollInterval = setInterval(async () => {
+      try {
+        const sr = await fetch('/api/verification/status/' + data.requestId);
+        const statusData = await sr.json();
+
+        if (statusData.status === 'request_retrieved') {
+          setStatus('Credential scanned — verifying…', 'active');
+        } else if (statusData.status === 'presentation_verified') {
+          clearInterval(pollInterval);
+          setStatus('Identity verified!', 'success');
+          document.getElementById('successMessage').classList.remove('hidden');
+          setTimeout(() => { window.location.href = '/passkey'; }, 2000);
+        } else if (statusData.status === 'presentation_error') {
+          clearInterval(pollInterval);
+          setStatus('Verification failed.', 'error');
+          document.getElementById('errorMessage').textContent = statusData.message || 'Verification failed.';
+          document.getElementById('errorMessage').classList.remove('hidden');
+        }
+      } catch (_) {}
+    }, 2500);
+
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setStatus('QR code expired. Please refresh.', 'error');
+    }, 5 * 60 * 1000);
+
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'error');
+    document.getElementById('errorMessage').textContent = err.message;
+    document.getElementById('errorMessage').classList.remove('hidden');
+  }
+})();
+</script>

@@ -1,0 +1,104 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step active">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">5. Passkeys</span>
+      </div>
+      <h1 class="page-title">Start Onboarding</h1>
+      <p class="page-subtitle">Enter your personal email and your employee ID to begin the identity verification process.</p>
+    </div>
+
+    <% if (typeof errors !== 'undefined' && errors && errors.length > 0) { %>
+      <div class="alert alert-error" role="alert">
+        <strong>Please fix the following errors:</strong>
+        <ul>
+          <% errors.forEach(function(e) { %><li><%= e %></li><% }); %>
+        </ul>
+      </div>
+    <% } %>
+
+    <div class="card form-card">
+      <form method="POST" action="/onboarding/start" id="onboardingForm" novalidate>
+        <div class="form-group">
+          <label for="email" class="form-label">Personal Email Address <span class="required">*</span></label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            class="form-input"
+            placeholder="you@personalemail.com"
+            value="<%= typeof formData !== 'undefined' && formData.email ? formData.email : '' %>"
+            required
+            autocomplete="email"
+          >
+          <p class="form-hint">Use your personal email, not your corporate address.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="employeeId" class="form-label">Employee ID <span class="required">*</span></label>
+          <input
+            type="text"
+            id="employeeId"
+            name="employeeId"
+            class="form-input"
+            placeholder="e.g. EMP-12345"
+            value="<%= typeof formData !== 'undefined' && formData.employeeId ? formData.employeeId : '' %>"
+            required
+            autocomplete="off"
+          >
+          <p class="form-hint">Your employee ID was provided in your offer letter.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="managerEmail" class="form-label">Manager Email <span class="optional">(optional)</span></label>
+          <input
+            type="email"
+            id="managerEmail"
+            name="managerEmail"
+            class="form-input"
+            placeholder="manager@company.com"
+            value="<%= typeof formData !== 'undefined' && formData.managerEmail ? formData.managerEmail : '' %>"
+            autocomplete="off"
+          >
+          <p class="form-hint">Leave blank to use the default configured manager.</p>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="submitBtn">
+            <span class="btn-text">Submit &amp; Request Approval</span>
+            <span class="btn-spinner hidden" aria-hidden="true">&#9696;</span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="info-box">
+      <h3>🔒 How we protect your information</h3>
+      <ul>
+        <li>Your employee ID is used to generate a verifiable credential and is not stored long-term.</li>
+        <li>Your personal email is used only for this onboarding session.</li>
+        <li>All communications use encrypted channels.</li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script>
+document.getElementById('onboardingForm').addEventListener('submit', function() {
+  document.getElementById('submitBtn').disabled = true;
+  document.querySelector('.btn-text').textContent = 'Submitting…';
+  document.querySelector('.btn-spinner').classList.remove('hidden');
+});
+</script>

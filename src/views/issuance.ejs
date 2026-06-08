@@ -1,0 +1,145 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Enter Details</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step done">2. Approval</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step active">3. Get Credential</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">4. Verify</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">5. Passkeys</span>
+      </div>
+      <h1 class="page-title">Get Your Verified ID Credential</h1>
+      <p class="page-subtitle">Scan the QR code below with <strong>Microsoft Authenticator</strong> to receive your Verified Employee credential.</p>
+    </div>
+
+    <div class="two-col">
+      <div class="qr-panel card" id="issuancePanel">
+        <div class="qr-status-bar">
+          <span class="status-dot status-waiting" id="statusDot"></span>
+          <span id="statusText">Generating issuance request…</span>
+        </div>
+        <div class="qr-container" id="qrContainer">
+          <div class="qr-placeholder" id="qrPlaceholder">
+            <div class="spinner"></div>
+          </div>
+          <canvas id="qrCanvas" class="hidden"></canvas>
+          <img id="qrImage" class="hidden" alt="Issuance QR Code">
+        </div>
+        <div class="qr-actions hidden" id="qrActions">
+          <p class="qr-url-label">Or open on this device:</p>
+          <a href="#" id="qrLink" class="btn btn-secondary btn-small" target="_blank">Open in Authenticator</a>
+        </div>
+      </div>
+
+      <div class="instructions-panel">
+        <h2 class="instructions-title">How to scan</h2>
+        <ol class="instructions-list">
+          <li>Open <strong>Microsoft Authenticator</strong> on your phone.</li>
+          <li>Tap the <strong>+</strong> button and select <em>Other account</em>.</li>
+          <li>Tap <strong>Scan QR code</strong> and point your camera at the code.</li>
+          <li>Follow the prompts to accept the <strong>Verified Employee</strong> credential.</li>
+          <li>Return to this page — it will advance automatically.</li>
+        </ol>
+        <div class="alert alert-info mt-md">
+          <strong>Don't have Microsoft Authenticator?</strong><br>
+          <a href="https://aka.ms/authenticator" target="_blank" rel="noopener">Download it here</a>
+          before scanning.
+        </div>
+        <div id="successMessage" class="alert alert-success hidden">
+          ✅ <strong>Credential issued!</strong> Advancing to verification…
+        </div>
+        <div id="errorMessage" class="alert alert-error hidden"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+<script>
+(async function initIssuance() {
+  let pollInterval = null;
+
+  function setStatus(text, type) {
+    document.getElementById('statusText').textContent = text;
+    const dot = document.getElementById('statusDot');
+    dot.className = 'status-dot status-' + type;
+  }
+
+  try {
+    setStatus('Creating issuance request…', 'waiting');
+    const resp = await fetch('/api/issuance/request', { method: 'POST' });
+    if (!resp.ok) throw new Error('Failed to create issuance request.');
+    const data = await resp.json();
+
+    // Render QR code
+    document.getElementById('qrPlaceholder').classList.add('hidden');
+    const qrContainer = document.getElementById('qrContainer');
+    const qrDiv = document.createElement('div');
+    qrDiv.id = 'qrCodeEl';
+    qrContainer.appendChild(qrDiv);
+
+    // If the API returned a base64 image use it; otherwise generate from URL
+    if (data.qrCode) {
+      const img = document.getElementById('qrImage');
+      img.src = 'data:image/png;base64,' + data.qrCode;
+      img.classList.remove('hidden');
+    } else {
+      new QRCode(document.getElementById('qrCodeEl'), {
+        text: data.url,
+        width: 256,
+        height: 256,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    }
+
+    // Show deep-link button
+    const link = document.getElementById('qrLink');
+    link.href = data.url;
+    document.getElementById('qrActions').classList.remove('hidden');
+    setStatus('Waiting for you to scan…', 'waiting');
+
+    // Poll for issuance status
+    pollInterval = setInterval(async () => {
+      try {
+        const sr = await fetch('/api/issuance/status/' + data.requestId);
+        const statusData = await sr.json();
+
+        if (statusData.status === 'request_retrieved') {
+          setStatus('QR code scanned — issuing credential…', 'active');
+        } else if (statusData.status === 'issuance_successful') {
+          clearInterval(pollInterval);
+          setStatus('Credential issued!', 'success');
+          document.getElementById('successMessage').classList.remove('hidden');
+          setTimeout(() => { window.location.href = '/api/verification/request' ? '/onboarding/verify' : '/onboarding/verify'; }, 2000);
+        } else if (statusData.status === 'issuance_error') {
+          clearInterval(pollInterval);
+          setStatus('Issuance failed.', 'error');
+          document.getElementById('errorMessage').textContent = statusData.message || 'Issuance failed.';
+          document.getElementById('errorMessage').classList.remove('hidden');
+        }
+      } catch (_) {}
+    }, 2500);
+
+    // Expire after 5 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setStatus('QR code expired. Please refresh.', 'error');
+    }, 5 * 60 * 1000);
+
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'error');
+    document.getElementById('errorMessage').textContent = err.message;
+    document.getElementById('errorMessage').classList.remove('hidden');
+  }
+})();
+</script>
