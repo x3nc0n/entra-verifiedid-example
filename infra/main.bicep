@@ -17,10 +17,10 @@ param azureTenantId string
 param azureClientId string
 
 @description('Verified ID authority DID.')
-param verifiedIdAuthority string
+param verifiedIdAuthority string = ''
 
 @description('Credential manifest URL.')
-param credentialManifestUrl string
+param credentialManifestUrl string = ''
 
 @description('Credential type name.')
 param credentialType string = 'VerifiedEmployee'
@@ -31,11 +31,11 @@ param identityPassEndpoint string = ''
 @description('FIDO2 relying party display name.')
 param fido2RpName string = 'Entra Verified ID Demo'
 
-@description('FIDO2 relying party ID (domain).')
-param fido2RpId string
+@description('FIDO2 relying party ID (domain). Set after deployment via app settings.')
+param fido2RpId string = ''
 
-@description('FIDO2 allowed origin.')
-param fido2Origin string
+@description('FIDO2 allowed origin. Set after deployment via app settings.')
+param fido2Origin string = ''
 
 @description('Enable demo mode (loosened auth for demo purposes).')
 param demoMode bool = true
