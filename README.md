@@ -483,9 +483,35 @@ For automated deployment with GitHub Actions, see the companion private reposito
 
 That repo contains:
 - GitHub Actions workflows for CI/CD to Azure App Service
-- Environment-specific configuration (dev, staging, prod)
+- Environment-specific configuration (staging, production, infrastructure)
 - Slot swap deployment strategy for zero-downtime releases
 - Secrets management via GitHub Environments
+
+### Authentication: UAMI Recommended
+
+When setting up CI/CD, use a **User-Assigned Managed Identity (UAMI)** with OIDC federation — not a service principal. UAMI is the Microsoft-recommended pattern for workload identity federation:
+
+| | UAMI (Recommended) | Service Principal |
+|---|---|---|
+| **Client secret** | None — OIDC only | Required for some scenarios; expires ≤2 years |
+| **Credential surface** | Federated credentials only | Client secrets, certs, federated — any Entra app admin can add more |
+| **Managed by** | Azure RBAC (Contributor on the identity RG) | Entra ID (Application Administrator role) |
+| **Secret rotation** | Not applicable | Manual; missed rotation = broken pipelines or security risk |
+| **Blast radius** | Scoped to Azure resources only | Entra ID app registration + Azure resources |
+
+```bash
+# Create a UAMI and add OIDC federation (no secrets!)
+az identity create --name uami-verifiedid-deploy --resource-group rg-identity --location eastus2
+az identity federated-credential create \
+  --name github-main \
+  --identity-name uami-verifiedid-deploy \
+  --resource-group rg-identity \
+  --issuer "https://token.actions.githubusercontent.com" \
+  --subject "repo:<ORG>/<REPO>:ref:refs/heads/main" \
+  --audiences "api://AzureADTokenExchange"
+```
+
+See the [CI/CD deployment repo README](https://github.com/Spava-Corp/entra-verifiedid-deploy#1-configure-azure-oidc-authentication) for complete setup instructions including SP fallback.
 
 ---
 
