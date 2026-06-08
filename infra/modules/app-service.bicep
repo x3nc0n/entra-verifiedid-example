@@ -45,11 +45,11 @@ param appInsightsInstrumentationKey string = ''
 @description('Key Vault URI (set after Key Vault module runs).')
 param keyVaultUrl string = ''
 
-@description('Key Vault secret name for the app client secret.')
-param clientSecretKvName string = 'azure-client-secret'
+@description('Key Vault secret name for the app credential.')
+param kvNameAppCredential string = 'azure-client-secret'
 
-@description('Key Vault secret name for the IdentityPass subscription key.')
-param identityPassKeyKvName string = 'identitypass-key'
+@description('Key Vault secret name for the IdentityPass key.')
+param kvNameIdentityPass string = 'identitypass-key'
 
 // ── Variables ──────────────────────────────────────────────────────────────────
 
@@ -106,12 +106,12 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
         // Secrets loaded from Key Vault via managed identity — never stored as plaintext app settings.
         // The bootstrap script (scripts/bootstrap.ps1) seeds these secrets into Key Vault.
         // Key Vault reference format: @Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<name>/)
-        { name: 'AZURE_CLIENT_SECRET', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${clientSecretKvName}/)' : '' }
+        { name: 'AZURE_CLIENT_SECRET', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameAppCredential}/)' : '' }
         { name: 'VERIFIED_ID_AUTHORITY', value: verifiedIdAuthority }
         { name: 'CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
         { name: 'CREDENTIAL_TYPE', value: credentialType }
         { name: 'IDENTITYPASS_ENDPOINT', value: identityPassEndpoint }
-        { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${identityPassKeyKvName}/)' : '' }
+        { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameIdentityPass}/)' : '' }
         { name: 'FIDO2_RP_NAME', value: fido2RpName }
         { name: 'FIDO2_RP_ID', value: fido2RpId }
         { name: 'FIDO2_ORIGIN', value: fido2Origin }

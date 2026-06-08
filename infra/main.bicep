@@ -109,7 +109,6 @@ module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
     keyVaultUrl: keyVault.outputs.vaultUri
   }
-  dependsOn: [keyVault]
 }
 
 // ── Outputs ────────────────────────────────────────────────────────────────────
