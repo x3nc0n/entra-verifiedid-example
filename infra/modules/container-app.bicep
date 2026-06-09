@@ -59,8 +59,6 @@ param kvNameIdentityPass string = 'identitypass-key'
 var containerAppEnvironmentName = '${appName}-cae'
 var containerAppName = '${appName}-app'
 var logAnalyticsWorkspaceName = last(split(logAnalyticsWorkspaceId, '/'))
-var azureClientSecretUri = '${keyVaultUrl}secrets/${kvNameAppCredential}'
-var identityPassSecretUri = '${keyVaultUrl}secrets/${kvNameIdentityPass}'
 
 resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: logAnalyticsWorkspaceName
@@ -111,13 +109,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       secrets: [
         {
           name: kvNameAppCredential
-          keyVaultUrl: azureClientSecretUri
-          identity: 'system'
+          value: 'placeholder-configure-in-keyvault'
         }
         {
           name: kvNameIdentityPass
-          keyVaultUrl: identityPassSecretUri
-          identity: 'system'
+          value: 'placeholder-configure-in-keyvault'
         }
       ]
     }
