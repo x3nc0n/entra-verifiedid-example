@@ -29,11 +29,11 @@ RUN chown -R appuser:appgroup /app
 USER appuser
 
 ENV NODE_ENV=production
-ENV PORT=8080
+ENV PORT=3000
 
-EXPOSE 8080
+EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:8080/health || exit 1
+  CMD wget -qO- http://localhost:3000/health || exit 1
 
-CMD ["node", "src/index.js"]
+CMD ["node", "src/app.js"]
