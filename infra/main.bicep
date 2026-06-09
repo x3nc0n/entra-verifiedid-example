@@ -40,6 +40,12 @@ param fido2Origin string = ''
 @description('Enable demo mode (loosened auth for demo purposes).')
 param demoMode bool = true
 
+@description('App Service Plan SKU (e.g. F1, B1, S1, P1v3).')
+param appServiceSku string = 'B1'
+
+@description('App Service Plan SKU tier (e.g. Free, Basic, Standard, PremiumV3).')
+param appServiceSkuTier string = 'Basic'
+
 // ── Modules ────────────────────────────────────────────────────────────────────
 
 module monitoring 'modules/monitoring.bicep' = {
@@ -73,6 +79,8 @@ module appService 'modules/app-service.bicep' = {
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin
     demoMode: demoMode
+    appServiceSku: appServiceSku
+    appServiceSkuTier: appServiceSkuTier
     appInsightsConnectionString: monitoring.outputs.connectionString
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
   }
@@ -105,6 +113,8 @@ module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin
     demoMode: demoMode
+    appServiceSku: appServiceSku
+    appServiceSkuTier: appServiceSkuTier
     appInsightsConnectionString: monitoring.outputs.connectionString
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
     keyVaultUrl: keyVault.outputs.vaultUri

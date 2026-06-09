@@ -36,6 +36,12 @@ param fido2Origin string
 @description('Enable demo mode.')
 param demoMode bool = true
 
+@description('App Service Plan SKU name.')
+param appServiceSku string = 'B1'
+
+@description('App Service Plan SKU tier.')
+param appServiceSkuTier string = 'Basic'
+
 @description('Application Insights connection string.')
 param appInsightsConnectionString string = ''
 
@@ -66,8 +72,8 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
     environment: 'demo'
   }
   sku: {
-    name: 'B1'
-    tier: 'Basic'
+    name: appServiceSku
+    tier: appServiceSkuTier
   }
   kind: 'linux'
   properties: {
