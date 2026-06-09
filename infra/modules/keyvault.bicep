@@ -6,8 +6,8 @@ param location string
 @description('Application name prefix.')
 param appName string
 
-@description('Principal ID of the web app managed identity.')
-param webAppPrincipalId string
+@description('Principal ID of the application managed identity.')
+param appPrincipalId string = ''
 
 // ── Variables ──────────────────────────────────────────────────────────────────
 
@@ -38,20 +38,19 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// Grant the web app's managed identity Key Vault Secrets User role
-// This replaces access policies — RBAC is the recommended model
-resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, webAppPrincipalId, 'Key Vault Secrets User')
+// Grant the app's managed identity Key Vault Secrets User role.
+resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appPrincipalId)) {
+  name: guid(keyVault.id, appPrincipalId, 'Key Vault Secrets User')
   scope: keyVault
   properties: {
-    principalId: webAppPrincipalId
+    principalId: appPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
   }
 }
 
 // ── Placeholder Secrets ────────────────────────────────────────────────────────
-// Created as empty placeholders so Key Vault references in App Service don't 404.
+// Created as placeholders so Key Vault-backed app secrets resolve consistently.
 // The bootstrap script (scripts/bootstrap.ps1) populates these with real values.
 
 resource clientSecretKvEntry 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {

@@ -40,12 +40,6 @@ param fido2Origin string = ''
 @description('Enable demo mode (loosened auth for demo purposes).')
 param demoMode bool = true
 
-@description('App Service Plan SKU (e.g. F1, B1, S1, P1v3).')
-param appServiceSku string = 'B1'
-
-@description('App Service Plan SKU tier (e.g. Free, Basic, Standard, PremiumV3).')
-param appServiceSkuTier string = 'Basic'
-
 // ── Modules ────────────────────────────────────────────────────────────────────
 
 module monitoring 'modules/monitoring.bicep' = {
@@ -64,42 +58,16 @@ module storage 'modules/storage.bicep' = {
   }
 }
 
-module appService 'modules/app-service.bicep' = {
-  name: 'appService'
-  params: {
-    location: location
-    appName: appName
-    azureTenantId: azureTenantId
-    azureClientId: azureClientId
-    verifiedIdAuthority: verifiedIdAuthority
-    credentialManifestUrl: credentialManifestUrl
-    credentialType: credentialType
-    identityPassEndpoint: identityPassEndpoint
-    fido2RpName: fido2RpName
-    fido2RpId: fido2RpId
-    fido2Origin: fido2Origin
-    demoMode: demoMode
-    appServiceSku: appServiceSku
-    appServiceSkuTier: appServiceSkuTier
-    appInsightsConnectionString: monitoring.outputs.connectionString
-    appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
-  }
-}
-
 module keyVault 'modules/keyvault.bicep' = {
   name: 'keyVault'
   params: {
     location: location
     appName: appName
-    webAppPrincipalId: appService.outputs.principalId
   }
 }
 
-// ── Update web app with Key Vault URI (requires keyvault to exist first) ───────
-// Second pass adds the Key Vault URL so app settings can use KV references
-// for secrets (AZURE_CLIENT_SECRET, IDENTITYPASS_SUBSCRIPTION_KEY).
-module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
-  name: 'appServiceKeyVaultUpdate'
+module containerApp 'modules/container-app.bicep' = {
+  name: 'containerApp'
   params: {
     location: location
     appName: appName
@@ -113,21 +81,29 @@ module appServiceKeyVaultUpdate 'modules/app-service.bicep' = {
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin
     demoMode: demoMode
-    appServiceSku: appServiceSku
-    appServiceSkuTier: appServiceSkuTier
     appInsightsConnectionString: monitoring.outputs.connectionString
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     keyVaultUrl: keyVault.outputs.vaultUri
+  }
+}
+
+module keyVaultAccess 'modules/keyvault.bicep' = {
+  name: 'keyVaultAccess'
+  params: {
+    location: location
+    appName: appName
+    appPrincipalId: containerApp.outputs.principalId
   }
 }
 
 // ── Outputs ────────────────────────────────────────────────────────────────────
 
-@description('Web application name.')
-output webAppName string = appService.outputs.webAppName
+@description('Container App resource name.')
+output webAppName string = containerApp.outputs.containerAppName
 
-@description('Web application default hostname.')
-output webAppHostname string = appService.outputs.defaultHostname
+@description('Container App hostname.')
+output webAppHostname string = containerApp.outputs.fqdn
 
 @description('Key Vault URI.')
 output keyVaultUri string = keyVault.outputs.vaultUri

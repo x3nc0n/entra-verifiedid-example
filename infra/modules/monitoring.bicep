@@ -61,3 +61,6 @@ output connectionString string = appInsights.properties.ConnectionString
 
 @description('Log Analytics workspace resource ID.')
 output workspaceId string = logAnalytics.id
+
+@description('Log Analytics workspace resource ID for downstream modules.')
+output logAnalyticsWorkspaceId string = logAnalytics.id
