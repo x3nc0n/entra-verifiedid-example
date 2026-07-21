@@ -17,6 +17,13 @@
       </div>
     </div>
 
+    <% if (demoMode) { %>
+    <div class="card alert alert-warning" role="alert">
+      <strong>Demo Mode:</strong> the manager approval step in this run was simulated automatically for demonstration purposes.
+      No real IdentityPass email approval or live reviewer action occurred.
+    </div>
+    <% } %>
+
     <div class="card complete-panel">
       <div class="complete-icon" aria-hidden="true">&#128737;&#65039;</div>
       <h1 class="complete-title">You're all set!</h1>
@@ -33,7 +40,11 @@
           &#10003;&nbsp; <strong>Identity verified</strong> via Microsoft Entra Verified ID
         </li>
         <li class="completed-item">
+          <% if (demoMode) { %>
+          &#10003;&nbsp; <strong>Manager approval</strong> simulated automatically in Demo Mode
+          <% } else { %>
           &#10003;&nbsp; <strong>Manager approval</strong> completed via IdentityPass
+          <% } %>
         </li>
         <% if (passkeyPhone && passkeyYubikey) { %>
         <li class="completed-item">

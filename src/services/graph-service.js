@@ -1,22 +1,22 @@
 'use strict';
 
-const { ClientSecretCredential } = require('@azure/identity');
+const { DefaultAzureCredential } = require('@azure/identity');
 const axios = require('axios');
 const config = require('../config');
 
 let _credential = null;
 
 /**
- * Returns (or creates) a ClientSecretCredential for the Graph API.
- * @returns {ClientSecretCredential}
+ * Returns (or creates) a DefaultAzureCredential for the Graph API.
+ * In Azure this resolves to managed identity; locally it falls back to
+ * developer credentials such as Azure CLI / VS Code.
+ * @returns {DefaultAzureCredential}
  */
 function getCredential() {
   if (!_credential) {
-    _credential = new ClientSecretCredential(
-      config.azure.tenantId,
-      config.azure.clientId,
-      config.azure.clientSecret
-    );
+    _credential = new DefaultAzureCredential({
+      managedIdentityClientId: config.azure.clientId || undefined,
+    });
   }
   return _credential;
 }

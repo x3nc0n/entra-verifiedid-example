@@ -13,7 +13,11 @@ const config = {
   // ── Azure AD / Entra ID ──────────────────────────────────────────────────────
   azure: {
     tenantId: process.env.AZURE_TENANT_ID || '',
+    // Client ID of the app runtime user-assigned managed identity in Azure.
+    // DefaultAzureCredential uses this to disambiguate which identity to use.
     clientId: process.env.AZURE_CLIENT_ID || '',
+    // Deprecated for Graph / Verified ID runtime auth now that services prefer
+    // DefaultAzureCredential, but left here while infra/bootstrap still emit it.
     clientSecret: process.env.AZURE_CLIENT_SECRET || '',
     authority: process.env.AZURE_AUTHORITY ||
       `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID || 'common'}`,
@@ -40,6 +44,7 @@ const config = {
       'https://identitypass.microsoft.com/api/v1',
     subscriptionKey: process.env.IDENTITYPASS_SUBSCRIPTION_KEY || '',
     defaultManagerEmail: process.env.IDENTITYPASS_MANAGER_EMAIL || '',
+    webhookSecret: process.env.IDENTITYPASS_WEBHOOK_SECRET || '',
   },
 
   // ── Microsoft Graph API ──────────────────────────────────────────────────────
