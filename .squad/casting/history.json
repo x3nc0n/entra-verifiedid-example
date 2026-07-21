@@ -1,0 +1,21 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "The Matrix",
+      "assignment_id": "entra-verifiedid-example-init-2026-07-21",
+      "used_at": "2026-07-21T13:48:00-04:00"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "entra-verifiedid-example-init-2026-07-21": {
+      "universe": "The Matrix",
+      "agents": {
+        "lead": "Morpheus",
+        "backend-dev": "Neo",
+        "infra-devops": "Trinity",
+        "security": "Tank"
+      },
+      "created_at": "2026-07-21T13:48:00-04:00"
+    }
+  }
+}
