@@ -9,9 +9,6 @@ param appName string
 @description('Azure AD tenant ID.')
 param azureTenantId string
 
-@description('App registration client ID.')
-param azureClientId string
-
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string
 
@@ -48,8 +45,14 @@ param logAnalyticsWorkspaceId string
 @description('Key Vault URI.')
 param keyVaultUrl string
 
-@description('Key Vault secret name for the app credential.')
-param kvNameAppCredential string = 'azure-client-secret'
+@description('Azure Container Registry login server used by the deployed app.')
+param containerRegistryLoginServer string
+
+@description('Resource ID of the app runtime user-assigned managed identity.')
+param appRuntimeManagedIdentityResourceId string
+
+@description('Client ID of the app runtime user-assigned managed identity.')
+param appRuntimeManagedIdentityClientId string
 
 @description('Key Vault secret name for the IdentityPass key.')
 param kvNameIdentityPass string = 'identitypass-key'
@@ -59,7 +62,6 @@ param kvNameIdentityPass string = 'identitypass-key'
 var containerAppEnvironmentName = '${appName}-cae'
 var containerAppName = '${appName}-app'
 var logAnalyticsWorkspaceName = last(split(logAnalyticsWorkspaceId, '/'))
-var azureClientSecretUri = '${keyVaultUrl}secrets/${kvNameAppCredential}'
 var identityPassSecretUri = '${keyVaultUrl}secrets/${kvNameIdentityPass}'
 
 resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
@@ -96,7 +98,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     environment: 'demo'
   }
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned,UserAssigned'
+    userAssignedIdentities: {
+      '${appRuntimeManagedIdentityResourceId}': {}
+    }
   }
   properties: {
     environmentId: containerAppEnvironment.id
@@ -108,12 +113,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      secrets: [
+      registries: [
         {
-          name: kvNameAppCredential
-          keyVaultUrl: azureClientSecretUri
+          server: containerRegistryLoginServer
           identity: 'system'
         }
+      ]
+      secrets: [
         {
           name: kvNameIdentityPass
           keyVaultUrl: identityPassSecretUri
@@ -127,23 +133,22 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'portal'
           image: 'node:20-alpine'
           command: [
-            '/bin/sh'
+            'node'
           ]
           args: [
-            '-c'
-            'npm start'
+            '-e'
+            'const http=require("http");const port=Number(process.env.PORT||3000);http.createServer((req,res)=>{res.statusCode=200;res.setHeader("Content-Type","text/plain");res.end(req.url==="/health"?"ok":"Infrastructure is ready. Deploy the real portal image through GitHub Actions.");}).listen(port,"0.0.0.0");'
           ]
           env: [
             { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
             { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
             { name: 'NODE_ENV', value: 'production' }
             { name: 'AZURE_TENANT_ID', value: azureTenantId }
-            { name: 'AZURE_CLIENT_ID', value: azureClientId }
-            { name: 'AZURE_CLIENT_SECRET', secretRef: kvNameAppCredential }
-            { name: 'VERIFIED_ID_AUTHORITY', value: verifiedIdAuthority }
-            { name: 'CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
-            { name: 'CREDENTIAL_TYPE', value: credentialType }
-            { name: 'IDENTITYPASS_ENDPOINT', value: identityPassEndpoint }
+            { name: 'AZURE_CLIENT_ID', value: appRuntimeManagedIdentityClientId }
+            { name: 'VC_ISSUER_AUTHORITY', value: verifiedIdAuthority }
+            { name: 'VC_CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
+            { name: 'VC_CREDENTIAL_TYPE', value: credentialType }
+            { name: 'IDENTITYPASS_API_ENDPOINT', value: identityPassEndpoint }
             { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', secretRef: kvNameIdentityPass }
             { name: 'FIDO2_RP_NAME', value: fido2RpName }
             { name: 'FIDO2_RP_ID', value: fido2RpId }

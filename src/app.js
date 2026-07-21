@@ -11,13 +11,14 @@ const config = require('./config');
 
 const indexRouter = require('./routes/index');
 const onboardingRouter = require('./routes/onboarding');
+const identityPassRouter = require('./routes/identitypass');
 const issuanceRouter = require('./routes/issuance');
 const verificationRouter = require('./routes/verification');
 const passkeyRouter = require('./routes/passkey');
 
 const app = express();
 
-// ── Trust proxy — required for Azure App Service / reverse proxies ───────────
+// ── Trust proxy — required for Azure Container Apps / reverse proxies ────────
 app.set('trust proxy', 1);
 
 // ── View engine ───────────────────────────────────────────────────────────────
@@ -26,6 +27,9 @@ app.set('view engine', 'ejs');
 
 // ── Request logging ───────────────────────────────────────────────────────────
 app.use(morgan(config.nodeEnv === 'production' ? 'combined' : 'dev'));
+
+// ── IdentityPass webhook (raw body required for HMAC validation) ─────────────
+app.use('/api/identitypass', identityPassRouter);
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json());
@@ -56,6 +60,11 @@ app.use((req, res, next) => {
   res.locals.user = req.session.user || null;
   res.locals.onboardingState = req.session.onboardingState || null;
   next();
+});
+
+// ── Health probe ─────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────

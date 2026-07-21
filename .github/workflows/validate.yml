@@ -11,10 +11,9 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write  # Allow posting validation summary comments
+  pull-requests: write
 
 jobs:
-  # ── Job 1: Lint & Test ────────────────────────────────────────────────────────
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest
@@ -38,7 +37,6 @@ jobs:
       - name: Run tests
         run: npm test --if-present
 
-  # ── Job 2: Bicep Validation ───────────────────────────────────────────────────
   bicep-validate:
     name: Validate Bicep
     runs-on: ubuntu-latest
@@ -80,22 +78,82 @@ jobs:
       - name: Check ARM template parameters
         run: |
           python3 -c "
-          import json
+          import json, sys
           with open('azuredeploy.json') as f:
               arm = json.load(f)
-          params = list(arm.get('parameters', {}).keys())
-          required = [
-              'appName','location','azureTenantId','azureClientId','azureClientSecret',
-              'verifiedIdAuthority','credentialManifestUrl','fido2RpId','fido2Origin'
-          ]
-          missing = [p for p in required if p not in params]
+          params = set(arm.get('parameters', {}).keys())
+          required = {
+              'appName','location','azureTenantId','azureClientId',
+              'verifiedIdAuthority','credentialManifestUrl','credentialType',
+              'identityPassEndpoint','fido2RpName','fido2RpId','fido2Origin','demoMode'
+          }
+          forbidden = {'azureClientSecret'}
+          missing = sorted(required - params)
+          unexpected = sorted(forbidden & params)
           if missing:
               print('ERROR: Missing required parameters:', missing)
-              exit(1)
-          print('All required parameters present:', len(params), 'total')
+              sys.exit(1)
+          if unexpected:
+              print('ERROR: Forbidden legacy parameters still present:', unexpected)
+              sys.exit(1)
+          print('ARM parameter set matches Container Apps template expectations')
           "
 
-  # ── Job 3: Security Scan ──────────────────────────────────────────────────────
+      - name: Check ARM template targets Container Apps
+        run: |
+          python3 -c "
+          import json, sys
+          with open('azuredeploy.json') as f:
+              arm = json.load(f)
+          resource_types = {r.get('type') for r in arm.get('resources', [])}
+          required = {
+              'Microsoft.App/managedEnvironments',
+              'Microsoft.App/containerApps',
+              'Microsoft.ContainerRegistry/registries'
+          }
+          forbidden = {'Microsoft.Web/serverfarms', 'Microsoft.Web/sites'}
+          missing = sorted(required - resource_types)
+          legacy = sorted(forbidden & resource_types)
+          if missing:
+              print('ERROR: Missing Container Apps resource types:', missing)
+              sys.exit(1)
+          if legacy:
+              print('ERROR: Legacy App Service resources still present:', legacy)
+              sys.exit(1)
+          print('ARM resources target Azure Container Apps with ACR')
+          "
+
+      - name: Check Container App registry wiring
+        run: |
+          python3 -c "
+          import json, sys
+          with open('azuredeploy.json') as f:
+              arm = json.load(f)
+          apps = [r for r in arm.get('resources', []) if r.get('type') == 'Microsoft.App/containerApps']
+          if len(apps) != 1:
+              print('ERROR: Expected exactly one Container App resource')
+              sys.exit(1)
+          app = apps[0]
+          config = app.get('properties', {}).get('configuration', {})
+          registries = config.get('registries', [])
+          if not registries:
+              print('ERROR: Container App is missing registry configuration')
+              sys.exit(1)
+          registry = registries[0]
+          if registry.get('identity') != 'system':
+              print('ERROR: Container App registry auth must use the system-assigned identity')
+              sys.exit(1)
+          server = registry.get('server', '')
+          if '.azurecr.io' not in server:
+              print('ERROR: Container App registry server is not an Azure Container Registry:', server)
+              sys.exit(1)
+          args = app.get('properties', {}).get('template', {}).get('containers', [{}])[0].get('args', [])
+          if 'npm start' in args:
+              print('ERROR: Placeholder runtime still uses npm start on a base image')
+              sys.exit(1)
+          print('Container App registry wiring and bootstrap placeholder are coherent')
+          "
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest

@@ -2,22 +2,14 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "Entra Verified ID Employee/Guest Onboarding Demo Portal — Deploy to Azure",
-    "_generator": {
-      "name": "bicep",
-      "templateHash": "entra-verifiedid-example"
-    }
+    "description": "Entra Verified ID Employee/Guest Onboarding Demo Portal — Deploy to Azure (Container Apps)",
+    "notes": [
+      "Hand-aligned to infra/main.bicep because this repo does not currently include a committed ARM generation script.",
+      "Evaluation path only: this template provisions infrastructure plus a bootstrap placeholder container, not the repo's real application image.",
+      "Complete the primary deployment flow by running scripts/07-bootstrap-github-actions-uami.ps1, wiring GitHub Environment variables, then deploying the real image through .github/workflows/deploy.yml."
+    ]
   },
   "parameters": {
-    "appName": {
-      "type": "string",
-      "defaultValue": "entra-vid",
-      "minLength": 3,
-      "maxLength": 20,
-      "metadata": {
-        "description": "Application name prefix used for resource naming (3–20 alphanumeric/hyphen chars)."
-      }
-    },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
@@ -25,55 +17,54 @@
         "description": "Azure region for all resources."
       }
     },
+    "appName": {
+      "type": "string",
+      "defaultValue": "entra-vid",
+      "minLength": 3,
+      "maxLength": 20,
+      "metadata": {
+        "description": "Application name prefix used for resource naming."
+      }
+    },
     "azureTenantId": {
       "type": "string",
       "metadata": {
-        "description": "Azure AD / Entra tenant ID."
+        "description": "Entra / Azure AD tenant ID."
       }
     },
     "azureClientId": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "App registration (service principal) client ID."
-      }
-    },
-    "azureClientSecret": {
-      "type": "securestring",
-      "metadata": {
-        "description": "App registration client secret."
+        "description": "Legacy app registration client ID. Not injected into the runtime app when managed identity auth is used."
       }
     },
     "verifiedIdAuthority": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "Entra Verified ID authority DID (did:web:… or did:ion:…)."
+        "description": "Verified ID authority DID."
       }
     },
     "credentialManifestUrl": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "URL of the credential manifest JSON for the issued credential type."
+        "description": "Credential manifest URL."
       }
     },
     "credentialType": {
       "type": "string",
       "defaultValue": "VerifiedEmployee",
       "metadata": {
-        "description": "Credential type name matching the manifest (e.g. VerifiedEmployee)."
+        "description": "Credential type name."
       }
     },
     "identityPassEndpoint": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "IdentityPass REST API endpoint URL (optional)."
-      }
-    },
-    "identityPassSubscriptionKey": {
-      "type": "securestring",
-      "defaultValue": "",
-      "metadata": {
-        "description": "IdentityPass subscription / API key (optional)."
+        "description": "IdentityPass endpoint URL."
       }
     },
     "fido2RpName": {
@@ -85,37 +76,42 @@
     },
     "fido2RpId": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "FIDO2 relying party ID — must match the app's domain (e.g. contoso.azurewebsites.net)."
+        "description": "FIDO2 relying party ID (usually the deployed Container App FQDN)."
       }
     },
     "fido2Origin": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "FIDO2 allowed origin including scheme (e.g. https://contoso.azurewebsites.net)."
+        "description": "FIDO2 allowed origin including scheme (for example https://<container-app-fqdn>)."
       }
     },
     "demoMode": {
       "type": "bool",
       "defaultValue": true,
       "metadata": {
-        "description": "Enable demo mode (relaxed auth checks for demonstration purposes)."
+        "description": "Enable demo mode (loosened auth for demo purposes)."
       }
     }
   },
   "variables": {
-    "planName": "[concat(parameters('appName'), '-plan')]",
-    "webAppName": "[concat(parameters('appName'), '-app')]",
+    "containerAppEnvironmentName": "[concat(parameters('appName'), '-cae')]",
+    "containerAppName": "[concat(parameters('appName'), '-app')]",
     "lawName": "[concat(parameters('appName'), '-law')]",
     "appInsightsName": "[concat(parameters('appName'), '-ai')]",
     "saName": "[take(toLower(concat(replace(parameters('appName'), '-', ''), uniqueString(resourceGroup().id))), 24)]",
     "kvSuffix": "[uniqueString(resourceGroup().id)]",
     "kvNameRaw": "[concat(parameters('appName'), '-kv-', variables('kvSuffix'))]",
     "kvName": "[if(greater(length(variables('kvNameRaw')), 24), substring(variables('kvNameRaw'), 0, 24), variables('kvNameRaw'))]",
+    "acrName": "[take(toLower(concat(replace(parameters('appName'), '-', ''), uniqueString(resourceGroup().id, parameters('appName'), 'acr'))), 50)]",
+    "acrLoginServer": "[concat(variables('acrName'), '.azurecr.io')]",
     "tags": {
       "project": "entra-verifiedid-example",
       "environment": "demo"
-    }
+    },
+    "appRuntimeUamiName": "[concat('uami-', parameters('appName'), '-app')]"
   },
   "resources": [
     {
@@ -182,64 +178,17 @@
       }
     },
     {
-      "type": "Microsoft.Web/serverfarms",
-      "apiVersion": "2023-01-01",
-      "name": "[variables('planName')]",
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('acrName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]",
       "sku": {
-        "name": "B1",
-        "tier": "Basic"
-      },
-      "kind": "linux",
-      "properties": {
-        "reserved": true
-      }
-    },
-    {
-      "type": "Microsoft.Web/sites",
-      "apiVersion": "2023-01-01",
-      "name": "[variables('webAppName')]",
-      "location": "[parameters('location')]",
-      "tags": "[variables('tags')]",
-      "kind": "app,linux",
-      "dependsOn": [
-        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
-        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
-      ],
-      "identity": {
-        "type": "SystemAssigned"
+        "name": "Basic"
       },
       "properties": {
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
-        "httpsOnly": true,
-        "siteConfig": {
-          "linuxFxVersion": "NODE|20-lts",
-          "http20Enabled": true,
-          "minTlsVersion": "1.2",
-          "ftpsState": "Disabled",
-          "healthCheckPath": "/health",
-          "appSettings": [
-            { "name": "WEBSITE_NODE_DEFAULT_VERSION", "value": "~20" },
-            { "name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "true" },
-            { "name": "NODE_ENV", "value": "production" },
-            { "name": "AZURE_TENANT_ID", "value": "[parameters('azureTenantId')]" },
-            { "name": "AZURE_CLIENT_ID", "value": "[parameters('azureClientId')]" },
-            { "name": "AZURE_CLIENT_SECRET", "value": "[parameters('azureClientSecret')]" },
-            { "name": "VERIFIED_ID_AUTHORITY", "value": "[parameters('verifiedIdAuthority')]" },
-            { "name": "CREDENTIAL_MANIFEST_URL", "value": "[parameters('credentialManifestUrl')]" },
-            { "name": "CREDENTIAL_TYPE", "value": "[parameters('credentialType')]" },
-            { "name": "IDENTITYPASS_ENDPOINT", "value": "[parameters('identityPassEndpoint')]" },
-            { "name": "IDENTITYPASS_SUBSCRIPTION_KEY", "value": "[parameters('identityPassSubscriptionKey')]" },
-            { "name": "FIDO2_RP_NAME", "value": "[parameters('fido2RpName')]" },
-            { "name": "FIDO2_RP_ID", "value": "[parameters('fido2RpId')]" },
-            { "name": "FIDO2_ORIGIN", "value": "[parameters('fido2Origin')]" },
-            { "name": "DEMO_MODE", "value": "[string(parameters('demoMode'))]" },
-            { "name": "APPINSIGHTS_INSTRUMENTATIONKEY", "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]" },
-            { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).ConnectionString]" },
-            { "name": "ApplicationInsightsAgent_EXTENSION_VERSION", "value": "~3" }
-          ]
-        }
+        "adminUserEnabled": false,
+        "publicNetworkAccess": "Enabled"
       }
     },
     {
@@ -248,9 +197,6 @@
       "name": "[variables('kvName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.Web/sites', variables('webAppName'))]"
-      ],
       "properties": {
         "sku": {
           "family": "A",
@@ -260,15 +206,7 @@
         "softDeleteRetentionInDays": 7,
         "enableSoftDelete": true,
         "enablePurgeProtection": true,
-        "accessPolicies": [
-          {
-            "tenantId": "[subscription().tenantId]",
-            "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('webAppName')), '2023-01-01', 'Full').identity.principalId]",
-            "permissions": {
-              "secrets": ["get", "list"]
-            }
-          }
-        ]
+        "enableRbacAuthorization": true
       }
     },
     {
@@ -279,7 +217,7 @@
         "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
       ],
       "properties": {
-        "value": "[parameters('azureClientSecret')]",
+        "value": "PLACEHOLDER--run-bootstrap-to-set",
         "attributes": {
           "enabled": true
         }
@@ -293,66 +231,241 @@
         "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
       ],
       "properties": {
-        "value": "[parameters('identityPassSubscriptionKey')]",
+        "value": "PLACEHOLDER--run-bootstrap-to-set",
         "attributes": {
           "enabled": true
         }
       }
     },
     {
-      "type": "Microsoft.Web/sites/config",
-      "apiVersion": "2023-01-01",
-      "name": "[concat(variables('webAppName'), '/appsettings')]",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[variables('appRuntimeUamiName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('containerAppEnvironmentName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
       "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
       ],
       "properties": {
-        "WEBSITE_NODE_DEFAULT_VERSION": "~20",
-        "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
-        "NODE_ENV": "production",
-        "AZURE_TENANT_ID": "[parameters('azureTenantId')]",
-        "AZURE_CLIENT_ID": "[parameters('azureClientId')]",
-        "AZURE_CLIENT_SECRET": "[parameters('azureClientSecret')]",
-        "VERIFIED_ID_AUTHORITY": "[parameters('verifiedIdAuthority')]",
-        "CREDENTIAL_MANIFEST_URL": "[parameters('credentialManifestUrl')]",
-        "CREDENTIAL_TYPE": "[parameters('credentialType')]",
-        "IDENTITYPASS_ENDPOINT": "[parameters('identityPassEndpoint')]",
-        "IDENTITYPASS_SUBSCRIPTION_KEY": "[parameters('identityPassSubscriptionKey')]",
-        "FIDO2_RP_NAME": "[parameters('fido2RpName')]",
-        "FIDO2_RP_ID": "[parameters('fido2RpId')]",
-        "FIDO2_ORIGIN": "[parameters('fido2Origin')]",
-        "KEY_VAULT_URL": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName'))).vaultUri]",
-        "DEMO_MODE": "[string(parameters('demoMode'))]",
-        "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]",
-        "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).ConnectionString]",
-        "ApplicationInsightsAgent_EXTENSION_VERSION": "~3"
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName')), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName')), '2023-09-01').primarySharedKey]"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('containerAppName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "identity": {
+        "type": "SystemAssigned,UserAssigned",
+        "userAssignedIdentities": {
+          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]": {}
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]",
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('kvName'), 'identitypass-key')]"
+      ],
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 3000,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": [
+            {
+              "server": "[variables('acrLoginServer')]",
+              "identity": "system"
+            }
+          ],
+          "secrets": [
+            {
+              "name": "identitypass-key",
+              "keyVaultUrl": "[concat('https://', variables('kvName'), '.vault.azure.net/secrets/identitypass-key')]",
+              "identity": "system"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "portal",
+              "image": "node:20-alpine",
+              "command": [
+                "node"
+              ],
+              "args": [
+                "-e",
+                "const http=require(\"http\");const port=Number(process.env.PORT||3000);http.createServer((req,res)=>{res.statusCode=200;res.setHeader(\"Content-Type\",\"text/plain\");res.end(req.url===\"/health\"?\"ok\":\"Infrastructure is ready. Deploy the real portal image through GitHub Actions.\");}).listen(port,\"0.0.0.0\");"
+              ],
+              "env": [
+                {
+                  "name": "WEBSITE_NODE_DEFAULT_VERSION",
+                  "value": "~20"
+                },
+                {
+                  "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                  "value": "true"
+                },
+                {
+                  "name": "NODE_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "AZURE_TENANT_ID",
+                  "value": "[parameters('azureTenantId')]"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').clientId]"
+                },
+                {
+                  "name": "VC_ISSUER_AUTHORITY",
+                  "value": "[parameters('verifiedIdAuthority')]"
+                },
+                {
+                  "name": "VC_CREDENTIAL_MANIFEST_URL",
+                  "value": "[parameters('credentialManifestUrl')]"
+                },
+                {
+                  "name": "VC_CREDENTIAL_TYPE",
+                  "value": "[parameters('credentialType')]"
+                },
+                {
+                  "name": "IDENTITYPASS_API_ENDPOINT",
+                  "value": "[parameters('identityPassEndpoint')]"
+                },
+                {
+                  "name": "IDENTITYPASS_SUBSCRIPTION_KEY",
+                  "secretRef": "identitypass-key"
+                },
+                {
+                  "name": "FIDO2_RP_NAME",
+                  "value": "[parameters('fido2RpName')]"
+                },
+                {
+                  "name": "FIDO2_RP_ID",
+                  "value": "[parameters('fido2RpId')]"
+                },
+                {
+                  "name": "FIDO2_ORIGIN",
+                  "value": "[parameters('fido2Origin')]"
+                },
+                {
+                  "name": "KEY_VAULT_URL",
+                  "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName')), '2023-07-01').vaultUri]"
+                },
+                {
+                  "name": "DEMO_MODE",
+                  "value": "[string(parameters('demoMode'))]"
+                },
+                {
+                  "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                  "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                  "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+                },
+                {
+                  "name": "ApplicationInsightsAgent_EXTENSION_VERSION",
+                  "value": "~3"
+                }
+              ],
+              "resources": {
+                "cpu": 0.5,
+                "memory": "1Gi"
+              }
+            }
+          ],
+          "scale": {
+            "minReplicas": 0,
+            "maxReplicas": 2
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('kvName')), reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'Full').identity.principalId, 'Key Vault Secrets User')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]",
+        "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]"
+      ],
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
       }
     }
   ],
   "outputs": {
     "webAppName": {
       "type": "string",
-      "value": "[variables('webAppName')]"
+      "value": "[variables('containerAppName')]"
     },
-    "webAppUrl": {
+    "webAppHostname": {
       "type": "string",
-      "value": "[concat('https://', reference(resourceId('Microsoft.Web/sites', variables('webAppName'))).defaultHostName)]"
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').properties.configuration.ingress.fqdn]"
     },
     "keyVaultUri": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName'))).vaultUri]"
+      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName')), '2023-07-01').vaultUri]"
     },
-    "appInsightsInstrumentationKey": {
+    "appInsightsKey": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]"
+      "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]"
     },
     "storageAccountName": {
       "type": "string",
       "value": "[variables('saName')]"
     },
-    "deployToAzureButton": {
+    "containerRegistryName": {
       "type": "string",
-      "value": "[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)"
+      "value": "[variables('acrName')]"
+    },
+    "containerRegistryLoginServer": {
+      "type": "string",
+      "value": "[variables('acrLoginServer')]"
+    },
+    "containerAppPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'full').identity.principalId]"
+    },
+    "appRuntimeManagedIdentityName": {
+      "type": "string",
+      "value": "[variables('appRuntimeUamiName')]"
+    },
+    "appRuntimeManagedIdentityClientId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').clientId]"
+    },
+    "appRuntimeManagedIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').principalId]"
     }
   }
 }

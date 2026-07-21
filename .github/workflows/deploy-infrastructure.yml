@@ -1,0 +1,168 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      whatIf:
+        description: Run Azure what-if instead of applying the Bicep deployment
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: deploy-infrastructure-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-infrastructure:
+    name: Deploy infrastructure → ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC via UAMI)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preview infrastructure changes (what-if)
+        if: ${{ inputs.whatIf }}
+        shell: bash
+        env:
+          DEPLOYMENT_NAME: infra-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          echo "Running az deployment group what-if for environment '${{ inputs.environment }}'..."
+          az deployment group what-if \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$DEPLOYMENT_NAME" \
+            --template-file infra/main.bicep \
+            --parameters azureTenantId="$AZURE_TENANT_ID" \
+            --no-pretty-print \
+            --only-show-errors
+
+          {
+            echo "## Infrastructure what-if"
+            echo
+            echo "- Environment: \`${{ inputs.environment }}\`"
+            echo "- Resource group: \`$AZURE_RESOURCE_GROUP\`"
+            echo "- Deployment name: \`$DEPLOYMENT_NAME\`"
+            echo
+            echo "This run used \`az deployment group what-if\` only. No resources were changed, no deployment outputs were captured, and no \`gh variable set\` commands were emitted."
+            echo
+            echo "Re-run this workflow with \`whatIf = false\` to apply \`infra/main.bicep\`, capture outputs, and print the exact GitHub Environment variable commands for \`.github/workflows/deploy.yml\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy infrastructure
+        if: ${{ !inputs.whatIf }}
+        shell: bash
+        env:
+          DEPLOYMENT_NAME: infra-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          echo "Deploying infra/main.bicep to resource group '$AZURE_RESOURCE_GROUP'..."
+          az deployment group create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$DEPLOYMENT_NAME" \
+            --template-file infra/main.bicep \
+            --parameters azureTenantId="$AZURE_TENANT_ID" \
+            --only-show-errors \
+            --output json > deploy-infrastructure-result.json
+
+      - name: Summarize deployment outputs and follow-up commands
+        if: ${{ !inputs.whatIf }}
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          def md(value: str) -> str:
+              return str(value).replace("|", "\\|").replace("\n", "<br>")
+
+          with open("deploy-infrastructure-result.json", encoding="utf-8") as fh:
+              deployment = json.load(fh)
+
+          outputs = deployment.get("properties", {}).get("outputs", {})
+          resolved = {
+              "AZURE_CONTAINER_APP_NAME": outputs.get("webAppName", {}).get("value", ""),
+              "AZURE_CONTAINER_APP_FQDN": outputs.get("webAppHostname", {}).get("value", ""),
+              "AZURE_CONTAINER_REGISTRY_NAME": outputs.get("containerRegistryName", {}).get("value", ""),
+              "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": outputs.get("containerRegistryLoginServer", {}).get("value", ""),
+              "APP_RUNTIME_UAMI_NAME": outputs.get("appRuntimeManagedIdentityName", {}).get("value", ""),
+              "APP_RUNTIME_UAMI_CLIENT_ID": outputs.get("appRuntimeManagedIdentityClientId", {}).get("value", ""),
+              "APP_RUNTIME_UAMI_PRINCIPAL_ID": outputs.get("appRuntimeManagedIdentityPrincipalId", {}).get("value", ""),
+              "CONTAINER_APP_PRINCIPAL_ID": outputs.get("containerAppPrincipalId", {}).get("value", ""),
+          }
+
+          gh_vars = {
+              "AZURE_CLIENT_ID": os.environ["AZURE_CLIENT_ID"],
+              "AZURE_TENANT_ID": os.environ["AZURE_TENANT_ID"],
+              "AZURE_SUBSCRIPTION_ID": os.environ["AZURE_SUBSCRIPTION_ID"],
+              "AZURE_RESOURCE_GROUP": os.environ["AZURE_RESOURCE_GROUP"],
+              "AZURE_CONTAINER_APP_NAME": resolved["AZURE_CONTAINER_APP_NAME"],
+              "AZURE_CONTAINER_REGISTRY_NAME": resolved["AZURE_CONTAINER_REGISTRY_NAME"],
+              "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": resolved["AZURE_CONTAINER_REGISTRY_LOGIN_SERVER"],
+              "AZURE_CONTAINER_APP_FQDN": resolved["AZURE_CONTAINER_APP_FQDN"],
+          }
+
+          env_name = os.environ["TARGET_ENVIRONMENT"]
+          commands = [
+              f'gh variable set {name} --env {env_name} --body "{value}"'
+              for name, value in gh_vars.items()
+          ]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Infrastructure deployment outputs\n\n")
+              summary.write("| Output | Value |\n|---|---|\n")
+              summary.write(f"| Environment | {md(env_name)} |\n")
+              summary.write(f"| Resource group | {md(os.environ['AZURE_RESOURCE_GROUP'])} |\n")
+              summary.write(f"| Container App name | {md(resolved['AZURE_CONTAINER_APP_NAME'])} |\n")
+              summary.write(f"| Container App FQDN | {md(resolved['AZURE_CONTAINER_APP_FQDN'])} |\n")
+              summary.write(f"| ACR name | {md(resolved['AZURE_CONTAINER_REGISTRY_NAME'])} |\n")
+              summary.write(f"| ACR login server | {md(resolved['AZURE_CONTAINER_REGISTRY_LOGIN_SERVER'])} |\n")
+              summary.write(f"| App runtime UAMI name | {md(resolved['APP_RUNTIME_UAMI_NAME'])} |\n")
+              summary.write(f"| App runtime UAMI client ID | {md(resolved['APP_RUNTIME_UAMI_CLIENT_ID'])} |\n")
+              summary.write(f"| App runtime UAMI principal ID | {md(resolved['APP_RUNTIME_UAMI_PRINCIPAL_ID'])} |\n")
+              summary.write(f"| Container App principal ID | {md(resolved['CONTAINER_APP_PRINCIPAL_ID'])} |\n")
+              summary.write("\n## GitHub Environment variable commands\n\n```bash\n")
+              summary.write("\n".join(commands))
+              summary.write("\n```\n\n")
+
+          print("Infrastructure deployment outputs:")
+          for key, value in resolved.items():
+              print(f"  {key}: {value}")
+
+          print("")
+          print("GitHub Environment variable commands:")
+          for command in commands:
+              print(command)
+
+          print("")
+          PY
