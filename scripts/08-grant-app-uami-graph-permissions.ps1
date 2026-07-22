@@ -109,13 +109,13 @@ function Assert-ExplicitGuidParameter {
 
 $GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 $GRAPH_APP_ROLES = @(
-    @{ Id = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"; Name = "User.Read.All" }
-    @{ Id = "50483e42-d915-4231-9639-7fdb7fd190e5"; Name = "UserAuthenticationMethod.ReadWrite.All" }
+    "User.Read.All"
+    "UserAuthenticationMethod.ReadWrite.All"
 )
 $VCS_REQUEST_APP_ID = "3db474b9-6a0c-4840-96ac-1fceb342124f"
 $VCS_REQUEST_APP_ROLES = @(
-    @{ Id = "b1949c8b-6e1e-4a6c-a8b8-f8ed1a4f3ac3"; Name = "VerifiableCredential.Create.IssueRequest" }
-    @{ Id = "680c2f48-4d1c-4e89-9bea-cfce432ee60e"; Name = "VerifiableCredential.Create.PresentRequest" }
+    "VerifiableCredential.Create.IssueRequest"
+    "VerifiableCredential.Create.PresentRequest"
 )
 
 $resolvedIdentityName = if ($IdentityName) { $IdentityName } else { "uami-$AppName-app" }
@@ -205,7 +205,7 @@ function Get-ResourceServicePrincipal {
         [string]$ResourceAppId
     )
 
-    $resourceSp = Get-MgServicePrincipal -Filter "appId eq '$ResourceAppId'" -ErrorAction Stop | Select-Object -First 1
+    $resourceSp = Get-MgServicePrincipal -Filter "appId eq '$ResourceAppId'" -Property "id,appId,displayName,appRoles" -ErrorAction Stop | Select-Object -First 1
     if (-not $resourceSp) {
         throw "Service principal for resource app '$ResourceAppId' was not found in this tenant."
     }
@@ -222,27 +222,39 @@ function Grant-AppRolesToPrincipal {
         [object]$ResourceServicePrincipal,
 
         [Parameter(Mandatory)]
-        [hashtable[]]$Roles
+        [string[]]$RoleNames
     )
 
     $existingAssignments = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $PrincipalId -ErrorAction SilentlyContinue
 
-    foreach ($role in $Roles) {
+    $availableRoleNames = @(
+        $ResourceServicePrincipal.AppRoles |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.Value) } |
+            Select-Object -ExpandProperty Value
+    )
+
+    foreach ($roleName in $RoleNames) {
+        $role = $ResourceServicePrincipal.AppRoles | Where-Object { $_.Value -eq $roleName } | Select-Object -First 1
+        if (-not $role) {
+            $availableRolesText = if ($availableRoleNames.Count -gt 0) { $availableRoleNames -join ', ' } else { '(none exposed)' }
+            throw "App role '$roleName' was not found on service principal '$($ResourceServicePrincipal.DisplayName)' (appId $($ResourceServicePrincipal.AppId)). Available roles: $availableRolesText"
+        }
+
         $hasAssignment = $existingAssignments | Where-Object {
             $_.ResourceId -eq $ResourceServicePrincipal.Id -and $_.AppRoleId -eq $role.Id
         }
 
         if ($hasAssignment) {
-            Write-Success "App role already assigned: $($role.Name)"
+            Write-Success "App role already assigned: $roleName"
             continue
         }
 
-        if ($PSCmdlet.ShouldProcess($PrincipalId, "Grant $($role.Name) on $($ResourceServicePrincipal.AppId)")) {
+        if ($PSCmdlet.ShouldProcess($PrincipalId, "Grant $roleName on $($ResourceServicePrincipal.AppId)")) {
             New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $PrincipalId `
                 -PrincipalId $PrincipalId `
                 -ResourceId $ResourceServicePrincipal.Id `
                 -AppRoleId $role.Id | Out-Null
-            Write-Success "Granted app role: $($role.Name)"
+            Write-Success "Granted app role: $roleName"
         }
     }
 }
@@ -297,28 +309,28 @@ if (-not $resolvedPrincipalId) {
 Write-Info "Target runtime UAMI principal ID: $resolvedPrincipalId"
 
 if ($DemoMode) {
-    Write-Success "[DEMO] Would grant Microsoft Graph app roles: $($GRAPH_APP_ROLES.Name -join ', ')"
-    Write-Success "[DEMO] Would grant Verified ID Request Service app roles: $($VCS_REQUEST_APP_ROLES.Name -join ', ')"
+    Write-Success "[DEMO] Would grant Microsoft Graph app roles: $($GRAPH_APP_ROLES -join ', ')"
+    Write-Success "[DEMO] Would grant Verified ID Request Service app roles: $($VCS_REQUEST_APP_ROLES -join ', ')"
 } else {
     $graphSp = Get-ResourceServicePrincipal -ResourceAppId $GRAPH_APP_ID
     $vcsRequestSp = Get-ResourceServicePrincipal -ResourceAppId $VCS_REQUEST_APP_ID
 
-    Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $graphSp -Roles $GRAPH_APP_ROLES
-    Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $vcsRequestSp -Roles $VCS_REQUEST_APP_ROLES
+    Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $graphSp -RoleNames $GRAPH_APP_ROLES
+    Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $vcsRequestSp -RoleNames $VCS_REQUEST_APP_ROLES
 }
 
 Format-Summary -Title "Runtime App UAMI Permission Grant" -Values @{
     RuntimeIdentityName = $runtimeIdentity.Name
     RuntimeIdentityClientId = $runtimeIdentity.ClientId
     RuntimeIdentityPrincipalId = $resolvedPrincipalId
-    GraphAppRoles = ($GRAPH_APP_ROLES.Name -join ', ')
-    VerifiedIdRequestAppRoles = ($VCS_REQUEST_APP_ROLES.Name -join ', ')
+    GraphAppRoles = ($GRAPH_APP_ROLES -join ', ')
+    VerifiedIdRequestAppRoles = ($VCS_REQUEST_APP_ROLES -join ', ')
 }
 
 return @{
     AppRuntimeManagedIdentityName = $runtimeIdentity.Name
     AppRuntimeManagedIdentityClientId = $runtimeIdentity.ClientId
     AppRuntimeManagedIdentityPrincipalId = $resolvedPrincipalId
-    GraphAppRoles = $GRAPH_APP_ROLES.Name
-    VerifiedIdRequestAppRoles = $VCS_REQUEST_APP_ROLES.Name
+    GraphAppRoles = $GRAPH_APP_ROLES
+    VerifiedIdRequestAppRoles = $VCS_REQUEST_APP_ROLES
 }
