@@ -295,6 +295,35 @@ function Get-TenantOrganization {
     return $response.value | Select-Object -First 1
 }
 
+function Test-ScopeSatisfied {
+    <#
+    .SYNOPSIS
+        Returns true when a granted Graph scope satisfies a required scope.
+    #>
+    param(
+        [string]$RequiredScope,
+        [string[]]$GrantedScopes
+    )
+
+    $granted = @($GrantedScopes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    if ([string]::IsNullOrWhiteSpace($RequiredScope)) {
+        return $false
+    }
+
+    if ($RequiredScope -in $granted) {
+        return $true
+    }
+
+    $readWriteEquivalent = switch -Regex ($RequiredScope) {
+        '^(?<Prefix>.+)\.Read\.All$' { "$($Matches.Prefix).ReadWrite.All"; break }
+        '^(?<Prefix>.+)\.Read$' { "$($Matches.Prefix).ReadWrite"; break }
+        default { $null }
+    }
+
+    return ($null -ne $readWriteEquivalent -and $readWriteEquivalent -in $granted)
+}
+
 function Assert-RequiredScopes {
     <#
     .SYNOPSIS
@@ -320,11 +349,13 @@ function Assert-RequiredScopes {
     $isUserProvidedAccessToken = @($authType, $tokenCredentialType) -contains "UserProvidedAccessToken"
 
     if ($current.Count -eq 0 -and $isUserProvidedAccessToken) {
-        Write-Warning "Skipping Graph scope validation: connected via a pre-issued access token and Get-MgContext does not expose scopes for this auth path. Ensure the token includes: $($Required -join ', ')"
+        Write-Warning "Skipping Graph scope validation because this user-provided access-token session exposed no scopes via Get-MgContext. Ensure the token includes: $($Required -join ', ')"
         return
     }
 
-    $missing = $Required | Where-Object { $_ -notin $current }
+    $missing = $Required | Where-Object {
+        -not (Test-ScopeSatisfied -RequiredScope $_ -GrantedScopes $current)
+    }
 
     if ($missing) {
         $scopeList = $missing -join ", "
