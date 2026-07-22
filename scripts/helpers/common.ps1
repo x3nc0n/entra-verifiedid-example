@@ -303,8 +303,26 @@ function Assert-RequiredScopes {
     #>
     param([string[]]$Required)
 
-    $ctx     = Get-MgContext
-    $current = $ctx.Scopes
+    $ctx = Get-MgContext
+    $current = @($ctx.Scopes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    $authType = if ($ctx.PSObject.Properties['AuthType']) {
+        [string]$ctx.AuthType
+    } else {
+        ""
+    }
+    $tokenCredentialType = if ($ctx.PSObject.Properties['TokenCredentialType']) {
+        [string]$ctx.TokenCredentialType
+    } else {
+        ""
+    }
+
+    $isUserProvidedAccessToken = @($authType, $tokenCredentialType) -contains "UserProvidedAccessToken"
+
+    if ($current.Count -eq 0 -and $isUserProvidedAccessToken) {
+        Write-Warning "Skipping Graph scope validation: connected via a pre-issued access token and Get-MgContext does not expose scopes for this auth path. Ensure the token includes: $($Required -join ', ')"
+        return
+    }
 
     $missing = $Required | Where-Object { $_ -notin $current }
 
