@@ -107,7 +107,7 @@ $createdUsers = [System.Collections.Generic.List[hashtable]]::new()
 Write-StepHeader "Writing demo-data.json"
 
 $demoData = @{
-    "$schema"   = "https://json-schema.org/draft/2020-12/schema"
+    '$schema'   = "https://json-schema.org/draft/2020-12/schema"
     description = "Test employee records for the Entra Verified ID onboarding portal"
     generated   = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
     tenantId    = $TenantId
@@ -272,7 +272,7 @@ if ($graphConnected -and -not $DemoMode) {
             email       = $employee.email
             displayName = $employee.displayName
             userId      = "DEMO-USER-ID-$(New-Guid)"
-            tap         = "DEMO-TAP-$(New-Guid.ToString().Substring(0,8).ToUpper())"
+            tap         = "DEMO-TAP-$((New-Guid).ToString().Substring(0,8).ToUpper())"
         })
     }
 }
@@ -284,11 +284,9 @@ $approvalConfig = @{
     description  = "Manager approval endpoint config for the Verified ID onboarding portal"
     generated    = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
     portalUrl    = $WebAppUrl
-    # Endpoints that the portal listens on for approval callbacks
+    # Canonical callback endpoint that the portal listens on for IdentityPass callbacks
     endpoints    = @{
-        approvalRequest  = "$($WebAppUrl.TrimEnd('/'))/api/identitypass/approval"
-        approvalCallback = "$($WebAppUrl.TrimEnd('/'))/api/identitypass/approval/callback"
-        webhookCallback  = "$($WebAppUrl.TrimEnd('/'))/api/identitypass/webhook"
+        callbackUrl = "$($WebAppUrl.TrimEnd('/'))/api/identitypass/callback"
     }
     # Simulated manager → employee mapping (used by demo mode to auto-approve)
     managers     = @(

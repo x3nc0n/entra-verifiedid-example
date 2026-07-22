@@ -24,6 +24,8 @@ router.post('/request', async (req, res) => {
 
   try {
     const callbackUrl = `${config.appBaseUrl}/api/issuance/callback`;
+    // Keep the demo credential minimal to match the onboarding flow and avoid
+    // collecting extra claims the app never reads.
     const claims = {
       employeeId: user.employeeId,
       email: user.email,

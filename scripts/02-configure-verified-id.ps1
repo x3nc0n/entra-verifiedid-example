@@ -55,6 +55,57 @@ $ErrorActionPreference = "Stop"
 # ── Constants ──────────────────────────────────────────────────────────────────
 $CREDENTIAL_TYPE      = "EmployeeOnboardingCredential"
 $CREDENTIAL_MANIFEST  = "$($CredentialManifestBaseUrl.TrimEnd('/'))/v1.0/verifiedid/manifest"
+$DID_CONFIGURATION_URL = "https://$DidWebDomain/.well-known/did-configuration.json"
+
+# Current Learn guidance for authority/contract management points to the
+# Verified ID Admin API permission model (VerifiableCredential.Authority.ReadWrite
+# and VerifiableCredential.Contract.ReadWrite on service principal
+# 6a8b4b39-c021-437c-b060-5a14a3fd65f3). This script still uses the existing
+# repository Graph request helper for now, so we surface the documented
+# permission requirements explicitly instead of incorrectly asserting the older
+# VerifiableCredential.Create.All scope.
+
+function Assert-ValidDidWebDomain {
+    param([Parameter(Mandatory)][string]$Domain)
+
+    if ($Domain -match '\s') {
+        throw "DidWebDomain must not contain whitespace. Pass a bare host/domain such as 'did.contoso.com'."
+    }
+
+    if ($Domain -match '^[a-z][a-z0-9+\-.]*://') {
+        throw "DidWebDomain must be a bare host/domain only. Do not include http:// or https://."
+    }
+
+    if ($Domain -match '[/?#]') {
+        throw "DidWebDomain must be a bare host/domain only. Do not include a path, query string, or fragment."
+    }
+
+    if ($Domain.StartsWith('.') -or $Domain.EndsWith('.')) {
+        throw "DidWebDomain must not start or end with a period."
+    }
+
+    if ([System.Uri]::CheckHostName($Domain) -eq [System.UriHostNameType]::Unknown) {
+        throw "DidWebDomain '$Domain' is not a valid host/domain value."
+    }
+}
+
+function Assert-DidConfigurationEndpoint {
+    param([Parameter(Mandatory)][string]$Url)
+
+    try {
+        $response = Invoke-WebRequest -Uri $Url -Method GET -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction Stop
+    } catch {
+        throw "DID configuration endpoint check failed for '$Url': $($_.Exception.Message)"
+    }
+
+    if ($response.StatusCode -ge 300 -and $response.StatusCode -lt 400) {
+        throw "DID configuration endpoint '$Url' redirects (HTTP $($response.StatusCode)). The endpoint must be directly reachable over HTTPS with no redirects."
+    }
+
+    if ($response.StatusCode -ne 200) {
+        throw "DID configuration endpoint '$Url' returned HTTP $($response.StatusCode). Publish a public, non-redirecting .well-known/did-configuration.json before rerunning."
+    }
+}
 
 # ── Helper: Build credential display definition ────────────────────────────────
 function Build-CredentialDisplay {
@@ -82,9 +133,7 @@ function Build-CredentialDisplay {
         claims  = @(
             @{ claim = "$.employeeId";   label = "Employee ID";  type = "String" }
             @{ claim = "$.email";        label = "Work Email";   type = "String" }
-            @{ claim = "$.displayName";  label = "Full Name";    type = "String" }
-            @{ claim = "$.department";   label = "Department";   type = "String" }
-            @{ claim = "$.startDate";    label = "Start Date";   type = "String" }
+            @{ claim = "$.onboardingDate"; label = "Onboarding Date"; type = "String" }
         )
     }
 }
@@ -108,9 +157,7 @@ function Build-CredentialRules {
                     mapping = @(
                         @{ outputClaim = "employeeId";  inputClaim = "employeeId";  indexed = $true }
                         @{ outputClaim = "email";       inputClaim = "email";       indexed = $false }
-                        @{ outputClaim = "displayName"; inputClaim = "displayName"; indexed = $false }
-                        @{ outputClaim = "department";  inputClaim = "department";  indexed = $false }
-                        @{ outputClaim = "startDate";   inputClaim = "startDate";   indexed = $false }
+                        @{ outputClaim = "onboardingDate"; inputClaim = "onboardingDate"; indexed = $false }
                     )
                     # required = true means the credential can't be issued without these claims
                     required = $true
@@ -131,15 +178,22 @@ Write-Info "Tenant: $TenantId"
 Write-Info "DID domain: $DidWebDomain"
 Write-Info "Credential type: $CREDENTIAL_TYPE"
 
+Assert-ValidDidWebDomain -Domain $DidWebDomain
+
 if ($DemoMode) {
     Write-Warning "DEMO MODE — no changes will be made to Entra ID"
+} else {
+    Assert-DidConfigurationEndpoint -Url $DID_CONFIGURATION_URL
 }
 
-# Verified ID configuration requires these Graph beta scopes
+# Current Learn guidance for Verified ID admin management:
+# - Application permission VerifiableCredential.Authority.ReadWrite
+# - Application permission VerifiableCredential.Contract.ReadWrite
+# - Key Vault Create Key permission when creating a new authority
 if (-not $DemoMode) {
-    Assert-RequiredScopes -Required @(
-        "VerifiableCredential.Create.All"
-    )
+    Write-Info "Verified ID authority/contract management should use the documented Verifiable Credentials Service Admin permissions"
+    Write-Info "Required for real runs: VerifiableCredential.Authority.ReadWrite + VerifiableCredential.Contract.ReadWrite"
+    Write-Info "If this run will create a new authority, ensure the caller also has Key Vault 'Create Key' permission"
 }
 
 # Get the tenant org ID (needed for Graph API paths)
@@ -172,7 +226,7 @@ if (-not $DemoMode) {
                     # did:web uses your domain's .well-known/did.json for DID resolution
                     # The domain must be publicly reachable
                     didMethod = "web"
-                    linkedDomainUrl = "https://$DidWebDomain/.well-known/did-configuration.json"
+                    linkedDomainUrl = $DID_CONFIGURATION_URL
                     # Signing keys are managed by the Verified ID service
                 }
 
@@ -205,7 +259,16 @@ if (-not $DemoMode) {
 # ── Step 2: Create Credential Contract (display + rules) ──────────────────────
 Write-StepHeader "Creating / updating credential contract"
 
-$appClientId = (Get-MgContext).ClientId
+$appClientId = if ($DemoMode) {
+    "DEMO-CLIENT-ID"
+} else {
+    $graphContext = Get-MgContext
+    if (-not $graphContext) {
+        throw "Microsoft Graph is not connected. Run: Connect-MgGraph -TenantId '$TenantId' -Scopes 'VerifiableCredential.Authority.ReadWrite','VerifiableCredential.Contract.ReadWrite'"
+    }
+
+    $graphContext.ClientId
+}
 
 if (-not $DemoMode) {
     try {
@@ -255,7 +318,7 @@ if (-not $DemoMode) {
     }
 } else {
     Write-Success "[DEMO] Would create credential contract with display + rules definitions"
-    Write-Info "  Claims: employeeId, email, displayName, department, startDate"
+    Write-Info "  Claims: employeeId, email, onboardingDate"
     Write-Info "  Attestation: id_token_hint (backend passes claims directly)"
     Write-Info "  Validity: 365 days"
     $manifestUrl = "$CREDENTIAL_MANIFEST"
@@ -266,7 +329,7 @@ Write-StepHeader "DID Well-Known Configuration"
 
 Write-Info "For did:web to work, you must publish a DID configuration document:"
 Write-Info ""
-Write-Info "  URL: https://$DidWebDomain/.well-known/did-configuration.json"
+Write-Info "  URL: $DID_CONFIGURATION_URL"
 Write-Info ""
 Write-Info "  This document links your domain to your DID and must be:"
 Write-Info "    1. Publicly accessible (no auth required)"

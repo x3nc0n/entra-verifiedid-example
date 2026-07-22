@@ -7,9 +7,9 @@
 .DESCRIPTION
     Idempotent script that:
       - Creates an app registration named "Entra Verified ID Onboarding Portal"
-      - Configures web redirect URIs for dev and prod
+      - Removes unused OIDC web redirect / implicit token settings
       - Adds Graph and Verifiable Credentials API permissions
-      - Creates a client secret
+      - Does not create a client secret because runtime auth now uses managed identity / DefaultAzureCredential
       - Creates a service principal
       - Grants admin consent for all permissions
 
@@ -19,10 +19,14 @@
     Azure AD / Entra ID tenant GUID.
 
 .PARAMETER AppServiceUrl
-    Optional production App Service URL for redirect URI registration.
+    Optional application base URL retained for compatibility with bootstrap.ps1.
 
 .PARAMETER SecretExpirationYears
     Lifetime of the generated client secret in years (default 1).
+
+.PARAMETER KeyVaultName
+    Deprecated compatibility parameter. Client secrets are no longer generated
+    because runtime auth now uses managed identity / DefaultAzureCredential.
 
 .PARAMETER DemoMode
     Skips real API calls and prints what would happen.
@@ -31,7 +35,8 @@
     .\01-configure-app-registration.ps1 -TenantId "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 .OUTPUTS
-    Hashtable with ClientId, ClientSecret, TenantId, ObjectId
+    Hashtable with ClientId, TenantId, ObjectId, and empty client-secret fields
+    because runtime auth no longer relies on a bootstrap secret.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -43,6 +48,8 @@ param(
 
     [ValidateRange(1,2)]
     [int]$SecretExpirationYears = 1,
+
+    [string]$KeyVaultName = "",
 
     [switch]$DemoMode
 )
@@ -58,8 +65,8 @@ $APP_DISPLAY_NAME = "Entra Verified ID Onboarding Portal"
 # Graph API permissions (AppId: 00000003-0000-0000-c000-000000000000)
 $GRAPH_APP_ID    = "00000003-0000-0000-c000-000000000000"
 $GRAPH_PERMISSIONS = @(
-    # Allows the portal to read the signed-in user's profile
-    @{ Id = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"; Type = "Scope" }  # User.Read
+    # App-only /users lookups require the application permission User.Read.All.
+    @{ Id = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"; Type = "Role" }  # User.Read.All
     # Required to register FIDO2 keys and TAP for new employees
     @{ Id = "50483e42-d915-4231-9639-7fdb7fd190e5"; Type = "Role"  }  # UserAuthenticationMethod.ReadWrite.All
 )
@@ -72,13 +79,6 @@ $VCS_PERMISSIONS = @(
     @{ Id = "b1949c8b-6e1e-4a6c-a8b8-f8ed1a4f3ac3"; Type = "Role" }  # VerifiableCredential.Create.IssueRequest
     # Allows the portal to request credential presentation from holders
     @{ Id = "680c2f48-4d1c-4e89-9bea-cfce432ee60e"; Type = "Role" }  # VerifiableCredential.Create.PresentRequest
-)
-
-# Dev redirect URIs — always registered
-$DEV_REDIRECT_URIS = @(
-    "https://localhost:5001/signin-oidc"
-    "https://localhost:7001/signin-oidc"
-    "http://localhost:5000/signin-oidc"
 )
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -100,15 +100,16 @@ if (-not $DemoMode) {
     )
 }
 
+# Current app code uses app-only tokens and does not expose a /signin-oidc
+# callback. Do not register redirect URIs or enable implicit ID-token issuance
+# until the runtime actually implements an OIDC sign-in flow.
+
 # ── Step 1: App Registration ───────────────────────────────────────────────────
 Write-StepHeader "Creating / finding app registration"
 
-$redirectUris = [System.Collections.Generic.List[string]]$DEV_REDIRECT_URIS
-
 if ($AppServiceUrl) {
-    $prodRedirect = "$($AppServiceUrl.TrimEnd('/'))/signin-oidc"
-    $redirectUris.Add($prodRedirect)
-    Write-Info "Including production redirect: $prodRedirect"
+    Write-Info "AppServiceUrl provided for downstream scripts: $AppServiceUrl"
+    Write-Info "Skipping /signin-oidc redirect registration because the app has no OIDC callback route today"
 }
 
 if ($DemoMode) {
@@ -130,15 +131,8 @@ if ($DemoMode) {
 
         if ($PSCmdlet.ShouldProcess($APP_DISPLAY_NAME, "Create app registration")) {
             $appParams = @{
-                DisplayName            = $APP_DISPLAY_NAME
-                SignInAudience         = "AzureADMyOrg"   # Single-tenant — employees only
-                Web                    = @{
-                    RedirectUris          = $redirectUris
-                    ImplicitGrantSettings = @{
-                        EnableIdTokenIssuance     = $true
-                        EnableAccessTokenIssuance = $false   # Use auth code flow, not implicit
-                    }
-                }
+                DisplayName    = $APP_DISPLAY_NAME
+                SignInAudience = "AzureADMyOrg"   # Single-tenant — employees only
                 # Required resource access added below after creation
             }
             $app      = New-MgApplication @appParams
@@ -146,6 +140,17 @@ if ($DemoMode) {
             $appObjId = $app.Id
             Write-Success "Created app registration: $appId"
         }
+    }
+
+    if ($PSCmdlet.ShouldProcess($APP_DISPLAY_NAME, "Remove unused OIDC redirect / implicit token configuration")) {
+        Update-MgApplication -ApplicationId $appObjId -Web @{
+            RedirectUris = @()
+            ImplicitGrantSettings = @{
+                EnableIdTokenIssuance     = $false
+                EnableAccessTokenIssuance = $false
+            }
+        }
+        Write-Success "Removed unused /signin-oidc redirect and implicit ID-token settings"
     }
 }
 
@@ -194,31 +199,20 @@ if (-not $DemoMode) {
     Write-Success "[DEMO] Would create service principal"
 }
 
-# ── Step 4: Client Secret ──────────────────────────────────────────────────────
-Write-StepHeader "Generating client secret"
+# ── Step 4: Managed Identity Runtime Alignment ─────────────────────────────────
+Write-StepHeader "Runtime authentication model"
 
 $secretValue = $null
+$secretReferenceName = ""
+$secretStoredInKeyVault = $false
 
-if (-not $DemoMode) {
-    $expiry = (Get-Date).AddYears($SecretExpirationYears)
-    Write-Warning "Client secret will expire: $($expiry.ToString('yyyy-MM-dd'))"
-    Write-Warning "Set a calendar reminder to rotate this secret before expiry!"
-
-    if ($PSCmdlet.ShouldProcess($APP_DISPLAY_NAME, "Add client secret")) {
-        $secretParams = @{
-            ApplicationId     = $appObjId
-            PasswordCredential = @{
-                DisplayName = "Bootstrap secret $(Get-Date -Format 'yyyy-MM-dd')"
-                EndDateTime = $expiry
-            }
-        }
-        $secretObj   = Add-MgApplicationPassword @secretParams
-        $secretValue = $secretObj.SecretText   # Only available at creation time!
-        Write-Success "Client secret generated (save this — it won't be shown again)"
-    }
-} else {
-    $secretValue = "DEMO-SECRET-$(New-Guid)"
-    Write-Success "[DEMO] Would generate client secret"
+Write-Info "The app runtime now uses DefaultAzureCredential (managed identity in Azure, developer credentials locally)."
+Write-Info "No bootstrap client secret will be created or stored."
+if ($KeyVaultName) {
+    Write-Info "Ignoring -KeyVaultName for script 01 because no client secret is generated."
+}
+if ($DemoMode) {
+    Write-Success "[DEMO] No client secret needed for the current runtime model"
 }
 
 # ── Step 5: Admin Consent ──────────────────────────────────────────────────────
@@ -278,20 +272,22 @@ if (-not $DemoMode) {
 
 # ── Output Summary ─────────────────────────────────────────────────────────────
 $output = @{
-    ENTRA_CLIENT_ID     = $appId
-    ENTRA_CLIENT_SECRET = $secretValue
-    ENTRA_TENANT_ID     = $TenantId
-    ENTRA_APP_OBJECT_ID = $appObjId
-    ENTRA_SP_OBJECT_ID  = $spId
+    ENTRA_CLIENT_ID               = $appId
+    ENTRA_CLIENT_SECRET           = if ($secretValue -and -not $secretStoredInKeyVault) { ConvertTo-SecureString $secretValue -AsPlainText -Force } else { $null }
+    ENTRA_CLIENT_SECRET_SECRET_NAME = $secretReferenceName
+    ENTRA_CLIENT_SECRET_KEYVAULT_NAME = if ($secretStoredInKeyVault) { $KeyVaultName } else { "" }
+    ENTRA_TENANT_ID               = $TenantId
+    ENTRA_APP_OBJECT_ID           = $appObjId
+    ENTRA_SP_OBJECT_ID            = $spId
 }
 
 Format-Summary -Title "App Registration Output" -Values @{
     ClientId     = $appId
     TenantId     = $TenantId
     AppObjectId  = $appObjId
-    SecretExpiry = if ($DemoMode) { "N/A" } else { (Get-Date).AddYears($SecretExpirationYears).ToString("yyyy-MM-dd") }
+    SecretExpiry = "Not used (DefaultAzureCredential)"
 }
 
-Write-Warning "Store ENTRA_CLIENT_SECRET in Key Vault — it cannot be retrieved again!"
+Write-Warning "Runtime auth now relies on managed identity / developer credentials. Grant app roles to the runtime identity, not to a client secret."
 
 return $output

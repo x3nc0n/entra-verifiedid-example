@@ -30,6 +30,10 @@
 .PARAMETER DemoMode
     Skips real API calls and prints what would happen.
 
+.PARAMETER AllowAllUsers
+    Required to intentionally configure tenant-wide scope when either target
+    group parameter is left blank.
+
 .EXAMPLE
     .\04-configure-fido2-policy.ps1 -TenantId "xxxx"
 
@@ -53,6 +57,8 @@ param(
 
     [ValidateRange(10, 480)]
     [int]$TapLifetimeMinutes = 60,
+
+    [switch]$AllowAllUsers,
 
     [switch]$DemoMode
 )
@@ -92,6 +98,21 @@ Write-Info "TAP target:   $(if ($TapGroupId)    { "Group: $TapGroupId"    } else
 
 if ($DemoMode) {
     Write-Warning "DEMO MODE — no policy changes will be made"
+}
+
+if (-not $DemoMode) {
+    $blankScopes = @()
+    if (-not $TargetGroupId) { $blankScopes += "TargetGroupId (FIDO2)" }
+    if (-not $TapGroupId)    { $blankScopes += "TapGroupId (TAP)" }
+
+    if ($blankScopes.Count -gt 0 -and -not $AllowAllUsers) {
+        Write-Warning "Blank policy scopes would roll this out tenant-wide: $($blankScopes -join ', ')"
+        throw "Refusing to target all users implicitly. Provide explicit group IDs for FIDO2/TAP, or rerun with -AllowAllUsers to confirm a tenant-wide rollout."
+    }
+
+    if ($blankScopes.Count -gt 0 -and $AllowAllUsers) {
+        Write-Warning "ALLOW-ALL-USERS OVERRIDE ACTIVE — blank scopes will target all users: $($blankScopes -join ', ')"
+    }
 }
 
 if (-not $DemoMode) {
@@ -178,6 +199,7 @@ Write-Info "TAP is used for initial onboarding:"
 Write-Info "  - New employee receives a TAP to bootstrap their account"
 Write-Info "  - TAP is one-time use with a $TapLifetimeMinutes-minute lifetime"
 Write-Info "  - Employee uses TAP to register their FIDO2 key or MFA method"
+Write-Warning "Recommendation: scope TAP to a dedicated onboarding group; consider 15-30 minutes for higher-risk cohorts."
 
 $tapState = "unknown"
 
@@ -262,6 +284,7 @@ Write-Host "  📋 Post-Configuration Steps:" -ForegroundColor Cyan
 Write-Host "     1. Test FIDO2 registration: sign in as a test user and register a security key" -ForegroundColor White
 Write-Host "     2. Issue a TAP for your test user via: New-MgUserAuthenticationTemporaryAccessPassMethod" -ForegroundColor White
 Write-Host "     3. Verify the test user can use TAP to sign in and register FIDO2" -ForegroundColor White
+Write-Host "     4. Prefer dedicated onboarding groups for FIDO2/TAP; use 15-30 minute TAPs for higher-risk cohorts" -ForegroundColor White
 Write-Host ""
 
 return $output

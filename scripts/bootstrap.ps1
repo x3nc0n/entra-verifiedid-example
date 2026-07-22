@@ -12,49 +12,68 @@
       Step 03 — IdentityPass            (03-configure-identitypass.ps1)
       Step 04 — FIDO2 / TAP Policy      (04-configure-fido2-policy.ps1)
       Step 05 — Azure Infrastructure    (05-deploy-infrastructure.ps1)
+      Step 05b — Runtime UAMI App Roles (08-grant-app-uami-graph-permissions.ps1, opt-in)
       Step 06 — Demo Data               (06-seed-demo-data.ps1)
 
     After all steps complete, generates a .env file mapping all collected
     outputs to the environment variable names expected by src/config.js.
 
+    Step 05 deploys the Azure infrastructure stack and runtime configuration.
+    It does not publish the application image — first image delivery happens
+    through .github/workflows/deploy.yml (push to main / workflow dispatch) or
+    a manual az acr build + az containerapp update flow.
+
     Safe to re-run — all child scripts are idempotent.
 
 .PARAMETER TenantId
-    Azure AD / Entra ID tenant GUID (required).
+    Azure AD / Entra ID tenant GUID. Required for live runs; omitted by default
+    in this public example repo.
 
 .PARAMETER SubscriptionId
-    Azure subscription GUID for infrastructure deployment (required).
+    Azure subscription GUID for infrastructure deployment. Required for live
+    runs; omitted by default in this public example repo.
 
 .PARAMETER ResourceGroupName
-    Azure resource group name (default: rg-verifiedid-demo).
+    Azure resource group name (default: rg-entra-verifiedid-example).
 
 .PARAMETER AppName
     Application name prefix for Azure resources (default: entra-vid).
     Must be 3–20 lowercase alphanumeric characters or hyphens.
 
 .PARAMETER Location
-    Azure region for infrastructure deployment (default: eastus).
+    Azure region for infrastructure deployment (default: centralus).
+
+.PARAMETER AppBaseUrl
+    Optional public HTTPS base URL for the deployed portal (custom domain or
+    Container Apps FQDN). When omitted, demo runs use a representative
+    Container Apps URL shape and real runs should be re-run with the actual
+    deployed URL once the first image has been published.
 
 .PARAMETER DemoMode
     Run in demo mode — all child scripts skip real API calls and use mock
     values. Useful for local development and CI/CD preview environments.
 
+.PARAMETER GrantRuntimeManagedIdentityGraphPermissions
+    Explicitly opts into the post-deploy Microsoft Graph / Verified ID Request
+    Service app-role grant for the runtime app UAMI. This is an
+    admin-consent-equivalent directory change and is skipped unless this switch
+    is supplied.
+
 .EXAMPLE
-    # Full demo setup — no real Azure resources
-    .\bootstrap.ps1 -TenantId "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" `
-                    -SubscriptionId "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy" `
-                    -DemoMode
+    # Full demo setup without real tenant/subscription IDs
+    .\bootstrap.ps1 -DemoMode
 
 .EXAMPLE
     # Production setup
-    .\bootstrap.ps1 -TenantId "xxxx" -SubscriptionId "yyyy" `
-                    -ResourceGroupName "rg-verifiedid-prod" `
+    .\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-subscription-id>" `
+                    -ResourceGroupName "rg-entra-verifiedid-prod" `
                     -AppName "contoso-vid" `
-                    -Location "westeurope"
+                    -Location "centralus" `
+                    -AppBaseUrl "https://contoso-vid-app.<env-hash>.centralus.azurecontainerapps.io"
 
 .EXAMPLE
     # Dry run — preview all changes without applying them
-    .\bootstrap.ps1 -TenantId "xxxx" -SubscriptionId "yyyy" -WhatIf
+    .\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-subscription-id>" -WhatIf
 
 .OUTPUTS
     Writes a .env file to the project root and returns a merged hashtable
@@ -62,21 +81,23 @@
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter(Mandatory)]
-    [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
-    [string]$TenantId,
+    [AllowEmptyString()]
+    [string]$TenantId = "",
 
-    [Parameter(Mandatory)]
-    [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
-    [string]$SubscriptionId,
+    [AllowEmptyString()]
+    [string]$SubscriptionId = "",
 
-    [string]$ResourceGroupName = "rg-verifiedid-demo",
+    [string]$ResourceGroupName = "rg-entra-verifiedid-example",
 
     [ValidateLength(3, 20)]
     [ValidatePattern('^[a-z0-9-]+$')]
     [string]$AppName = "entra-vid",
 
-    [string]$Location = "eastus",
+    [string]$Location = "centralus",
+
+    [string]$AppBaseUrl = "",
+
+    [switch]$GrantRuntimeManagedIdentityGraphPermissions,
 
     [switch]$DemoMode
 )
@@ -86,6 +107,46 @@ $ErrorActionPreference = "Stop"
 
 . "$PSScriptRoot\helpers\common.ps1"
 
+function Assert-ExplicitGuidParameter {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ParameterName,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        throw "$ParameterName is required for live runs. This public example repo does not ship a default $ParameterName. Pass -$ParameterName $placeholder explicitly."
+    }
+
+    if ($Value -notmatch '^[0-9a-fA-F-]{36}$') {
+        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        throw "$ParameterName must be a GUID. Pass -$ParameterName $placeholder explicitly."
+    }
+}
+
+function ConvertFrom-SecureValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    if ($Value -is [System.Security.SecureString]) {
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+        try {
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+
+    return [string]$Value
+}
+
 $startTime = Get-Date
 
 # ── Banner ─────────────────────────────────────────────────────────────────────
@@ -94,11 +155,12 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║    Entra Verified ID Onboarding Portal — Bootstrap               ║" -ForegroundColor Cyan
 Write-Host "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
-Write-Info "Tenant ID:          $TenantId"
-Write-Info "Subscription ID:    $SubscriptionId"
+Write-Info "Tenant ID:          $(if ($TenantId) { $TenantId } else { '(not provided)' })"
+Write-Info "Subscription ID:    $(if ($SubscriptionId) { $SubscriptionId } else { '(not provided)' })"
 Write-Info "Resource group:     $ResourceGroupName"
 Write-Info "App name:           $AppName"
 Write-Info "Location:           $Location"
+Write-Info "Grant runtime UAMI app roles: $($GrantRuntimeManagedIdentityGraphPermissions.IsPresent)"
 Write-Info "Demo mode:          $($DemoMode.IsPresent)"
 Write-Host ""
 
@@ -114,12 +176,16 @@ if ($PSBoundParameters.ContainsKey('Verbose')) { $passThrough['Verbose'] = $true
 # ── Prerequisites ──────────────────────────────────────────────────────────────
 Write-StepHeader "Prerequisites Check"
 
+if (-not $DemoMode) {
+    Assert-ExplicitGuidParameter -ParameterName "TenantId" -Value $TenantId
+    Assert-ExplicitGuidParameter -ParameterName "SubscriptionId" -Value $SubscriptionId
+}
+
 # Az module set required by all child scripts
 $requiredModules = @(
     @{ Name = "Az.Accounts";                      Purpose = "Azure authentication and context management" }
     @{ Name = "Az.Resources";                     Purpose = "Resource group and ARM/Bicep deployment" }
     @{ Name = "Az.KeyVault";                      Purpose = "Key Vault secret management" }
-    @{ Name = "Az.Websites";                      Purpose = "App Service / Web App management" }
     @{ Name = "Microsoft.Graph.Authentication";   Purpose = "Microsoft Graph authentication" }
     @{ Name = "Microsoft.Graph.Applications";     Purpose = "App registration management" }
     @{ Name = "Microsoft.Graph.Identity.SignIns"; Purpose = "Authentication method policy management" }
@@ -181,10 +247,27 @@ if (-not $DemoMode) {
 Write-Success "All prerequisites satisfied"
 
 # ── Derived values ─────────────────────────────────────────────────────────────
-# Build the expected App Service URL from the app name for redirect URI / DID
-# registration before the infrastructure step runs. Script 05 updates these.
-$expectedAppUrl = "https://$AppName.azurewebsites.net"
-$expectedDomain  = "$AppName.azurewebsites.net"
+# Build the expected public URL used by scripts 01–04 before infrastructure
+# deployment. Container Apps FQDNs are only known after deployment, so callers
+# can provide -AppBaseUrl for real runs; otherwise we fall back to a
+# representative Container Apps hostname shape and update to the actual output
+# after step 05 completes.
+if ($AppBaseUrl) {
+    $expectedAppUrl = $AppBaseUrl.TrimEnd('/')
+    $expectedDomain = ([System.Uri]$expectedAppUrl).Host
+} else {
+    $expectedDomain = if ($DemoMode) {
+        "$AppName-demo.$Location.azurecontainerapps.io"
+    } else {
+        "$AppName.<env-hash>.$Location.azurecontainerapps.io"
+    }
+    $expectedAppUrl = "https://$expectedDomain"
+    if (-not $DemoMode) {
+        Write-Warning "No -AppBaseUrl supplied. Pre-infrastructure steps will use a placeholder Container Apps FQDN shape until step 05 returns the actual hostname."
+    } else {
+        Write-Info "[DEMO] No -AppBaseUrl supplied. Using demo-safe placeholder hostname: $expectedDomain"
+    }
+}
 
 # ── Results collector ──────────────────────────────────────────────────────────
 $results    = @{}
@@ -279,11 +362,22 @@ try {
 # ── Step 05: Deploy Infrastructure ───────────────────────────────────────────
 Write-StepHeader "Step 05 — Azure Infrastructure" -Step "BOOTSTRAP"
 
-# Convert the plain-text client secret to SecureString for the infrastructure script
+# Convert the app-registration output into a SecureString for the infrastructure script.
+# Current runtime auth uses managed identity, so this is normally null.
 $clientSecretSecure = if ($results.ContainsKey('ENTRA_CLIENT_SECRET') -and $results.ENTRA_CLIENT_SECRET) {
-    ConvertTo-SecureString $results.ENTRA_CLIENT_SECRET -AsPlainText -Force
+    if ($results.ENTRA_CLIENT_SECRET -is [System.Security.SecureString]) {
+        $results.ENTRA_CLIENT_SECRET
+    } else {
+        ConvertTo-SecureString ([string]$results.ENTRA_CLIENT_SECRET) -AsPlainText -Force
+    }
 } else {
-    ConvertTo-SecureString "demo-placeholder-not-real" -AsPlainText -Force
+    $null
+}
+
+$identityPassSubscriptionKeySecure = if ($results.ContainsKey('IDENTITYPASS_SUBSCRIPTION_KEY') -and $results.IDENTITYPASS_SUBSCRIPTION_KEY -and $results.IDENTITYPASS_SUBSCRIPTION_KEY -ne 'demo-not-required') {
+    ConvertTo-SecureString ([string]$results.IDENTITYPASS_SUBSCRIPTION_KEY) -AsPlainText -Force
+} else {
+    $null
 }
 
 try {
@@ -297,15 +391,16 @@ try {
         -SubscriptionId $SubscriptionId `
         -VerifiedIdAuthority ($results['VERIFIED_ID_AUTHORITY_DID'] ?? "did:web:$expectedDomain") `
         -CredentialManifestUrl ($results['VERIFIED_ID_MANIFEST_URL'] ?? "$expectedAppUrl/v1.0/verifiedid/manifest") `
-        -CredentialType ($results['VERIFIED_ID_CREDENTIAL_TYPE'] ?? "EmployeeOnboardingCredential") `
+        -CredentialType ($results['VERIFIED_ID_CREDENTIAL_TYPE'] ?? "VerifiedEmployee") `
         -IdentityPassEndpoint ($results['IDENTITYPASS_ENDPOINT'] ?? "demo://simulated") `
+        -IdentityPassSubscriptionKey $identityPassSubscriptionKeySecure `
         -Fido2RpId $expectedDomain `
         -Fido2Origin $expectedAppUrl `
         -DemoMode:$DemoMode `
         @passThrough
 
     Merge-StepResult -StepOutput $r05
-    Write-Success "Step 05 complete — WebApp: $($r05.WebAppUrl)"
+    Write-Success "Step 05 complete — Container App URL: $($r05.WebAppUrl)"
 
     # Update expected URL now that we have the real deployment output
     if ($r05.WebAppUrl) {
@@ -316,6 +411,35 @@ try {
     $msg = "Step 05 (Infrastructure) failed: $($_.Exception.Message)"
     Write-ErrorMessage $msg
     $stepErrors.Add($msg)
+}
+
+# ── Step 05b: Runtime UAMI Graph / Verified ID app roles ─────────────────────
+Write-StepHeader "Step 05b — Runtime UAMI Graph App Roles" -Step "BOOTSTRAP"
+
+if ($DemoMode) {
+    Write-Info "[DEMO] Would grant Graph app roles to runtime UAMI"
+} elseif ($GrantRuntimeManagedIdentityGraphPermissions) {
+    try {
+        $r05b = & "$PSScriptRoot\08-grant-app-uami-graph-permissions.ps1" `
+            -TenantId $TenantId `
+            -SubscriptionId $SubscriptionId `
+            -ResourceGroupName $ResourceGroupName `
+            -AppName $AppName `
+            -AppRuntimeIdentityPrincipalId ($results['AppRuntimeManagedIdentityPrincipalId'] ?? "") `
+            -GrantAdminConsent:$GrantRuntimeManagedIdentityGraphPermissions `
+            -DemoMode:$DemoMode `
+            @passThrough
+
+        Merge-StepResult -StepOutput $r05b
+        Write-Success "Step 05b complete — Runtime UAMI principal: $($r05b.AppRuntimeManagedIdentityPrincipalId)"
+    } catch {
+        $msg = "Step 05b (Runtime UAMI Graph app roles) failed: $($_.Exception.Message)"
+        Write-ErrorMessage $msg
+        $stepErrors.Add($msg)
+    }
+} else {
+    Write-Warning "Skipping runtime UAMI app-role grants by default."
+    Write-Info "Re-run bootstrap.ps1 with -GrantRuntimeManagedIdentityGraphPermissions after reviewing the target UAMI and signing in with an appropriately privileged Graph operator."
 }
 
 # ── Step 06: Demo Data Seeding ────────────────────────────────────────────────
@@ -348,17 +472,20 @@ $sessionSecret = [System.Convert]::ToBase64String(
 $envValues = @{
     # ── Azure AD / Entra ID ─────────────────────────────────────────────────────
     AZURE_TENANT_ID     = $results['ENTRA_TENANT_ID'] ?? $TenantId
-    AZURE_CLIENT_ID     = $results['ENTRA_CLIENT_ID'] ?? ""
-    AZURE_CLIENT_SECRET = $results['ENTRA_CLIENT_SECRET'] ?? ""
+    AZURE_CLIENT_ID     = $results['AppRuntimeManagedIdentityClientId'] ?? $results['ENTRA_CLIENT_ID'] ?? ""
+    AZURE_CLIENT_SECRET = ConvertFrom-SecureValue ($results['ENTRA_CLIENT_SECRET'] ?? "")
+    AZURE_AUTHORITY     = "https://login.microsoftonline.com/$($results['ENTRA_TENANT_ID'] ?? $TenantId)"
 
     # ── Entra Verified ID ────────────────────────────────────────────────────────
+    VC_SERVICE_SCOPE            = "3db474b9-6a0c-4840-96ac-1fceb342124f/.default"
     VC_CREDENTIAL_MANIFEST_URL = $results['VERIFIED_ID_MANIFEST_URL'] ?? ""
-    VC_CREDENTIAL_TYPE         = $results['VERIFIED_ID_CREDENTIAL_TYPE'] ?? "EmployeeOnboardingCredential"
+    VC_CREDENTIAL_TYPE         = $results['VERIFIED_ID_CREDENTIAL_TYPE'] ?? "VerifiedEmployee"
     VC_ISSUER_AUTHORITY        = $results['VERIFIED_ID_AUTHORITY_DID'] ?? ""
 
     # ── IdentityPass ─────────────────────────────────────────────────────────────
     IDENTITYPASS_API_ENDPOINT     = $results['IDENTITYPASS_ENDPOINT'] ?? ""
     IDENTITYPASS_SUBSCRIPTION_KEY = $results['IDENTITYPASS_SUBSCRIPTION_KEY'] ?? ""
+    IDENTITYPASS_MANAGER_EMAIL    = $results['IDENTITYPASS_MANAGER_EMAIL'] ?? ""
 
     # ── FIDO2 / WebAuthn ─────────────────────────────────────────────────────────
     FIDO2_RP_NAME = $AppName
@@ -389,7 +516,7 @@ Write-Host "  ╚═════════════════════
 
 Format-Summary -Title "Bootstrap Results" -Values @{
     TenantId         = $TenantId
-    ClientId         = $results['ENTRA_CLIENT_ID'] ?? "(not set)"
+    RuntimeClientId  = $results['AppRuntimeManagedIdentityClientId'] ?? $results['ENTRA_CLIENT_ID'] ?? "(not set)"
     AuthorityDid     = $results['VERIFIED_ID_AUTHORITY_DID'] ?? "(not set)"
     CredentialType   = $results['VERIFIED_ID_CREDENTIAL_TYPE'] ?? "(not set)"
     WebAppUrl        = $results['WebAppUrl'] ?? $expectedAppUrl
@@ -415,9 +542,18 @@ Write-Host ""
 Write-Host "  📋 Next Steps:" -ForegroundColor Cyan
 Write-Host "     1. Review the generated .env file at: $envPath" -ForegroundColor White
 Write-Host "     2. Ensure .env is listed in .gitignore — never commit secrets!" -ForegroundColor White
-Write-Host "     3. Start the portal:  npm install && npm start" -ForegroundColor White
-if (-not $results['WebAppUrl']) {
-    Write-Host "     4. Re-run without -DemoMode to provision real Azure infrastructure" -ForegroundColor White
+if (-not $DemoMode -and -not $GrantRuntimeManagedIdentityGraphPermissions) {
+    Write-Host "     3. Run bootstrap.ps1 again with -GrantRuntimeManagedIdentityGraphPermissions (or run scripts/08-grant-app-uami-graph-permissions.ps1) before real Graph / Verified ID usage" -ForegroundColor White
+    Write-Host "     4. Publish the first real image via .github/workflows/deploy.yml (push to main) or manual az acr build + az containerapp update" -ForegroundColor White
+    Write-Host "     5. Start the portal locally if needed: npm install && npm start" -ForegroundColor White
+} else {
+    Write-Host "     3. Publish the first real image via .github/workflows/deploy.yml (push to main) or manual az acr build + az containerapp update" -ForegroundColor White
+    Write-Host "     4. Start the portal locally if needed: npm install && npm start" -ForegroundColor White
+}
+if (-not $DemoMode -and -not $AppBaseUrl) {
+    Write-Host "     6. Re-run bootstrap.ps1 with -AppBaseUrl $expectedAppUrl after the first image deploy so steps 01–04 can use the actual Container Apps URL" -ForegroundColor White
+} elseif (-not $results['WebAppUrl']) {
+    Write-Host "     6. Re-run without -DemoMode to provision real Azure infrastructure" -ForegroundColor White
 }
 Write-Host ""
 

@@ -14,19 +14,30 @@
         <span class="step-sep">&rarr;</span>
         <span class="step">5. Passkeys</span>
       </div>
-      <h1 class="page-title">Awaiting Manager Approval</h1>
+      <h1 class="page-title"><%= demoMode ? 'Awaiting Simulated Approval' : 'Awaiting Manager Approval' %></h1>
       <p class="page-subtitle">
+        <% if (demoMode) { %>
+        <strong>Demo Mode:</strong> no real manager email or live IdentityPass review will happen here.
+        This step is automatically simulated so you can continue the walkthrough.
+        <% } else { %>
         Your onboarding request has been submitted. Your manager will receive a
         notification and must approve before you can continue.
+        <% } %>
       </p>
     </div>
+
+    <% if (demoMode) { %>
+    <div class="card alert alert-warning" role="alert">
+      <strong>Demo Mode:</strong> manager approval is being simulated locally and will auto-approve after about 15 seconds.
+    </div>
+    <% } %>
 
     <div class="card status-panel" id="statusPanel">
       <div class="status-spinner-wrap">
         <div class="spinner spinner-lg" id="statusSpinner" aria-label="Waiting for approval"></div>
         <div class="status-check-icon hidden" id="statusCheckIcon" aria-hidden="true">&#10003;</div>
       </div>
-      <p class="status-label" id="statusLabel">Waiting for manager approval&hellip;</p>
+      <p class="status-label" id="statusLabel"><%= demoMode ? 'Demo Mode: simulating approval\u2026' : 'Waiting for manager approval\u2026' %></p>
       <p class="status-hint">This page polls automatically every few seconds — you don't need to refresh.</p>
       <div id="statusError" class="alert alert-error hidden" role="alert"></div>
     </div>
@@ -50,9 +61,15 @@
     <div class="info-box mt-md">
       <h3>&#128338; What happens next?</h3>
       <ul>
+        <% if (demoMode) { %>
+        <li><strong>Demo Mode:</strong> no real IdentityPass email is sent in this environment.</li>
+        <li>This page will automatically simulate approval and continue to credential issuance.</li>
+        <li>Use a non-demo deployment with a live IdentityPass webhook for real approval workflows.</li>
+        <% } else { %>
         <li>Your manager receives an email via IdentityPass with a one-click approval link.</li>
         <li>Once approved, this page will automatically advance to the credential issuance step.</li>
         <li>If you don't hear back within 24 hours, contact your manager directly.</li>
+        <% } %>
       </ul>
     </div>
 
@@ -80,11 +97,14 @@
         clearInterval(pollInterval);
         document.getElementById('statusSpinner').classList.add('hidden');
         document.getElementById('statusCheckIcon').classList.remove('hidden');
-        document.getElementById('statusLabel').textContent =
-          'Approved! Advancing to credential issuance\u2026';
+        document.getElementById('statusLabel').textContent = data.simulatedApproval
+          ? 'Demo Mode: simulated approval complete. Advancing to credential issuance\u2026'
+          : 'Approved! Advancing to credential issuance\u2026';
         setTimeout(function () {
           window.location.href = '/onboarding/approved';
         }, 1500);
+      } else if (data.simulatedApproval && data.message) {
+        document.getElementById('statusLabel').textContent = data.message;
       }
     } catch (_) {
       // Silently retry — transient network errors should not interrupt the UI

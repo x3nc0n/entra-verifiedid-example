@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js 20 LTS](https://img.shields.io/badge/node-20%20LTS-brightgreen.svg)](https://nodejs.org/)
 
+> **Deploy to Azure button = evaluation-only path.** The primary deployment story for this repo is infra + bootstrap + GitHub OIDC/environment wiring + CI/CD image deployment.
+
 A production-style demo portal showing **Microsoft-style employee and guest onboarding** using [Entra Verified ID](https://learn.microsoft.com/en-us/entra/verified-id/decentralized-identifier-overview). New users receive a verifiable credential through an IdentityPass request, present it to verify their identity, then register phishing-resistant MFA (Passkey on phone and/or YubiKey) — all in a single guided flow.
 
 ---
@@ -81,9 +83,9 @@ This pattern maps directly to [Microsoft's Entra Verified ID employee onboarding
 └─────────────────────────────────────────────────────────────────────┘
 
 Azure Resources:
-  App Service (Node.js) → Entra Verified ID API → Microsoft Authenticator
-                       → Key Vault (secrets)
-                       → Cosmos DB / Storage (session state)
+  Azure Container Apps (Node.js container) → Entra Verified ID API → Microsoft Authenticator
+                                          → Key Vault (secrets)
+                                          → Azure Storage (session state / artifacts)
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for detailed component descriptions and Mermaid sequence diagrams.
@@ -109,43 +111,94 @@ Before deploying, ensure you have:
 
 ## Quick Start
 
-The fastest path to a running demo:
+The primary path to a running demo is:
 
-### 1. Click Deploy to Azure
+### 1. Deploy the Azure infrastructure
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)
+Provision the shared Azure resources with either:
 
-Fill in the prompted parameters (tenant ID, resource group, etc.) and click **Review + Create**.
+- the new manual GitHub Actions workflow: `.github/workflows/deploy-infrastructure.yml`, or
+- a local/manual `az deployment group create` / `.\scripts\05-deploy-infrastructure.ps1` run.
+
+The workflow path is recommended once the GitHub Actions deploy UAMI has already been bootstrapped and the target GitHub Environment has at least these seed variables set:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_RESOURCE_GROUP`
+
+Run `.github/workflows/deploy-infrastructure.yml` with:
+
+- `environment`: `staging` or `production`
+- `whatIf`: `true` first for preview, then `false` to apply
+
+Use it once per environment before the first app deployment, then re-run it after any `infra/main.bicep` / `infra/modules/*.bicep` change.
+
+This provisions Azure Container Apps infrastructure, Key Vault, storage, monitoring, and Azure Container Registry (ACR). The initial Container App revision is only a bootstrap placeholder so the infra deploy succeeds cleanly before CI publishes the real app image.
 
 ### 2. Run the Bootstrap Script
 
-After deployment completes, open Azure Cloud Shell or a local PowerShell 7 session:
+After infra deployment completes, open Azure Cloud Shell or a local PowerShell 7 session:
 
 ```powershell
-# Clone the repo (if running locally)
-git clone https://github.com/x3nc0n/entra-verifiedid-example.git
-cd entra-verifiedid-example
+# One-time GitHub Actions identity/bootstrap
+.\scripts\07-bootstrap-github-actions-uami.ps1 `
+  -ResourceGroupName "rg-entra-verifiedid-example" `
+  -GitHubEnvironments @("staging")
 
-# Authenticate to Azure and Microsoft Graph
-Connect-AzAccount
-Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All"
-
-# Run bootstrap — registers Entra app, configures Verified ID, outputs .env values
-.\scripts\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-subscription-id>"
+# App/service bootstrap
+.\scripts\bootstrap.ps1 `
+  -DemoMode
 ```
 
-### 3. Configure Environment Variables
+`07-bootstrap-github-actions-uami.ps1` discovers the deployed Container App and ACR, grants the Container App's system-assigned identity `AcrPull` on the registry, and prints the exact `gh variable set` commands for GitHub Environment variables.
 
-Copy the output from the bootstrap script into your App Service Configuration, or into a local `.env` for development:
+`bootstrap.ps1` now handles tenant/app/service setup plus infra configuration and `.env` generation, but it does **not** ZIP-deploy or otherwise publish the application image. The first runnable image still arrives through `.github/workflows/deploy.yml` (push to `main` / workflow dispatch) or a manual `az acr build` + `az containerapp update`.
+
+### 3. Configure GitHub Environment variables
+
+After a real `.github/workflows/deploy-infrastructure.yml` run (`whatIf: false`), copy the printed `gh variable set --env <environment> --body "<value>"` commands into a local shell and run them once for that environment.
+
+The workflow prints the full deploy-time contract used by `.github/workflows/deploy.yml`:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_RESOURCE_GROUP`
+- `AZURE_CONTAINER_APP_NAME`
+- `AZURE_CONTAINER_REGISTRY_NAME`
+- `AZURE_CONTAINER_REGISTRY_LOGIN_SERVER`
+- `AZURE_CONTAINER_APP_FQDN`
+
+These must remain **GitHub Environment variables** (not repository variables) so staging and production can target different Azure resources safely.
+
+### 4. Deploy the real app image through CI/CD
+
+Push to `main` or run `.github/workflows/deploy.yml` manually. The workflow uses GitHub OIDC + the bootstrap UAMI to:
+
+- build the repo's Docker image with `az acr build`
+- push the image into the provisioned ACR
+- update the target Azure Container App to that image
+- smoke-test `https://<fqdn>/health`
+
+> ⚠️ Graph API permission grant remains a separate manual/local step. After infrastructure exists, run `scripts/08-grant-app-uami-graph-permissions.ps1` as an Entra admin. This is intentionally **not** automated in GitHub Actions.
+
+For local development, you can still copy the bootstrap output into `.env`:
 
 ```bash
 cp .env.example .env
 # Edit .env with values from bootstrap output
 ```
 
-### 4. Access the Portal
+### Evaluation-only shortcut: Deploy to Azure button
 
-Navigate to your App Service URL (shown in Azure Portal after deployment) or run locally:
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)
+
+Use the button only for quick single-resource-group evaluation. By itself it does **not** deploy the repo's real application image or configure GitHub OIDC/environment variables.
+
+### 5. Access the Portal
+
+After the deploy workflow completes, navigate to the Container App URL (the `webAppHostname` deployment output in Azure, or the `AZURE_CONTAINER_APP_FQDN` environment variable) or run locally:
 
 ```bash
 npm install
@@ -157,26 +210,45 @@ npm start
 
 ## Detailed Setup
 
-### Manual Azure Setup (without Deploy to Azure)
+### Manual Azure Setup (primary path)
 
-If you prefer manual deployment:
+If you prefer the primary scripted path:
 
 ```powershell
 # 1. Create resource group
-az group create --name rg-verifiedid-demo --location eastus
+az group create --name rg-entra-verifiedid-example --location centralus
 
-# 2. Deploy Bicep infrastructure
+# 2. Deploy Bicep infrastructure (includes ACR + bootstrap placeholder revision)
 az deployment group create \
-  --resource-group rg-verifiedid-demo \
+  --resource-group rg-entra-verifiedid-example \
   --template-file infra/main.bicep \
-  --parameters @infra/main.bicepparam
+  --parameters appName=entra-vid azureTenantId=<tenant-guid>
 ```
+
+After the deployment completes:
+
+1. read the `webAppHostname`, `containerRegistryName`, and `containerRegistryLoginServer` outputs,
+2. run `scripts/07-bootstrap-github-actions-uami.ps1` for each GitHub Environment you want to target,
+3. optionally run `.github/workflows/deploy-infrastructure.yml` for future infra updates instead of repeating local deploys,
+4. set the printed GitHub Environment variables,
+5. deploy the real image through `.github/workflows/deploy.yml`.
+
+> The initial Container App revision is a bootstrap placeholder only. The real demo application is delivered by CI/CD, not by the ARM/Bicep deployment alone.
+
+### Deploy to Azure button (evaluation-only)
+
+You can still use the button for a fast single-resource-group evaluation:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)
+
+That path provisions the same infrastructure and a bootstrap placeholder revision, but it does **not** establish repo-bound GitHub OIDC federation or publish the repo's Docker image. Treat it as infrastructure evaluation, not the primary delivery story.
 
 ### PowerShell Scripts Reference
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/bootstrap.ps1` | Full tenant bootstrap: registers Entra app, configures Verified ID service, creates Key Vault secrets, outputs `.env` values |
+| `scripts/07-bootstrap-github-actions-uami.ps1` | One-time GitHub Actions bootstrap: creates RG/UAMI, adds OIDC federated credentials, grants the deployed Container App `AcrPull` on ACR, and prints environment-scoped `gh variable set` commands |
 | `scripts/configure-verifiedid.ps1` | Configures Verified ID authority and credential manifest |
 | `scripts/register-app.ps1` | Registers the portal app in Entra ID with required API permissions |
 | `scripts/setup-storage.ps1` | Provisions Cosmos DB / Azure Storage for session state |
@@ -186,17 +258,18 @@ az deployment group create \
 
 ```powershell
 .\scripts\bootstrap.ps1 `
-  -TenantId        "<Entra Tenant ID>"        # Required
-  -SubscriptionId  "<Azure Subscription ID>"   # Required
-  -ResourceGroup   "rg-verifiedid-demo"        # Optional, default shown
-  -Location        "eastus"                    # Optional, default shown
-  -AppName         "VerifiedID-OnboardingDemo" # Optional, default shown
-  -DemoMode        $false                      # Set $true for mocked flow
+  -TenantId          "<your-tenant-id>"                         # Required for live runs; omit in DemoMode
+  -SubscriptionId    "<your-subscription-id>"                   # Required for live runs; omit in DemoMode
+  -ResourceGroupName "rg-entra-verifiedid-example"              # Optional default shown
+  -Location          "centralus"                                # Optional default shown
+  -AppName           "entra-vid"                                # Optional default shown
+  -AppBaseUrl        "https://entra-vid-app.<env-hash>.centralus.azurecontainerapps.io" # Optional for real runs
+  -DemoMode          $true                                      # Use $false with real tenant values
 ```
 
 ### Environment Variable Configuration
 
-After bootstrapping, set these values in App Service → Configuration → Application settings (or `.env` for local dev):
+After bootstrapping, set these values in the Container App's environment/secrets configuration (or `.env` for local dev):
 
 See the full [Configuration Reference](#configuration-reference) table below.
 
@@ -253,7 +326,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full architecture doc
 | **Verified ID Service** | Entra Verified ID REST API | Credential issuance and presentation |
 | **IdentityPass Workflow** | Node.js service + Entra | Request/approval/issuance orchestration |
 | **PRMFA Registration** | WebAuthn/FIDO2 (browser API) | Passkey registration for phone + YubiKey |
-| **App Service** | Azure App Service (Linux) | Hosting for the Node.js portal |
+| **Container App** | Azure Container Apps | Hosting for the Node.js portal container |
 | **Key Vault** | Azure Key Vault | Secrets management (certs, client secrets) |
 | **Storage** | Cosmos DB or Azure Storage | Session state, pending requests |
 | **Entra ID** | Microsoft Entra ID | Identity provider, app registration |
@@ -264,7 +337,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full architecture doc
 - Verified ID credentials are cryptographically signed — cannot be forged
 - Passkey registration uses WebAuthn Level 2; keys never leave the authenticator
 - Session tokens are short-lived and scoped to the onboarding flow
-- HTTPS enforced; HSTS enabled on App Service
+- HTTPS enforced at Container Apps ingress
 - See [SECURITY.md](SECURITY.md) for vulnerability reporting
 
 ---
@@ -439,79 +512,150 @@ Completes the WebAuthn registration ceremony.
 
 ## Configuration Reference
 
-All configuration is via environment variables. Set these in App Service → Configuration or a `.env` file for local development.
+All configuration is via environment variables. Set these in Azure Container Apps environment/secrets configuration or a `.env` file for local development.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NODE_ENV` | No | `development` | `production` or `development` |
 | `PORT` | No | `3000` | HTTP port for the Express server |
-| `DEMO_MODE` | No | `false` | `true` to run with mocked flows (no real Verified ID) |
-| `TENANT_ID` | **Yes** | — | Entra ID Tenant ID (GUID) |
-| `CLIENT_ID` | **Yes** | — | Entra app registration Client ID |
-| `CLIENT_SECRET` | **Yes** | — | Entra app Client Secret (use Key Vault ref in production) |
-| `VERIFIED_ID_AUTHORITY` | **Yes** | — | DID of your Verified ID authority (from tenant configuration) |
-| `VERIFIED_ID_CREDENTIAL_TYPE` | No | `IdentityPass` | The credential type name to issue |
-| `VERIFIED_ID_MANIFEST_URL` | **Yes** | — | URL to the credential manifest JSON |
-| `VERIFIED_ID_CALLBACK_URL` | **Yes** | — | Public URL for Verified ID service callbacks (must be HTTPS) |
-| `VERIFIED_ID_CALLBACK_API_KEY` | **Yes** | — | Shared secret for callback authentication |
-| `KEY_VAULT_URL` | No | — | Azure Key Vault URL (enables Managed Identity secret access) |
-| `SESSION_SECRET` | **Yes** | — | Secret for Express session signing (min 32 chars) |
-| `SESSION_STORE` | No | `memory` | `memory` or `cosmos` or `storage` |
-| `COSMOS_CONNECTION_STRING` | No | — | Required if `SESSION_STORE=cosmos` |
-| `STORAGE_CONNECTION_STRING` | No | — | Required if `SESSION_STORE=storage` |
-| `MAIL_PROVIDER` | No | `none` | `none`, `sendgrid`, or `smtp` |
-| `MAIL_API_KEY` | No | — | SendGrid API key (if `MAIL_PROVIDER=sendgrid`) |
-| `SMTP_HOST` | No | — | SMTP host (if `MAIL_PROVIDER=smtp`) |
-| `MANAGER_EMAIL` | No | — | Default manager email for approval notifications |
-| `WEBAUTHN_RP_ID` | **Yes** | — | Relying party ID for WebAuthn (usually your domain, e.g. `contoso.com`) |
-| `WEBAUTHN_RP_NAME` | No | `Onboarding Portal` | Display name for WebAuthn relying party |
-| `WEBAUTHN_ORIGIN` | **Yes** | — | Full origin URL for WebAuthn (e.g. `https://onboarding.contoso.com`) |
-| `LOG_LEVEL` | No | `info` | `error`, `warn`, `info`, `debug` |
+| `SESSION_SECRET` | No | `insecure-dev-secret-change-me` | Express session signing secret; override in every non-local environment |
+| `APP_BASE_URL` | No | `http://localhost:3000` | Public base URL used by the app when constructing links/callbacks |
+| `DEMO_MODE` | No | `false` | `true` to run with mocked flows (no real Verified ID / Graph calls) |
+| `AZURE_TENANT_ID` | Yes (when `DEMO_MODE=false`) | — | Entra tenant ID used for Graph and Verified ID token acquisition |
+| `AZURE_CLIENT_ID` | No for local development; yes in Azure when using a user-assigned managed identity | — | Client ID of the app runtime user-assigned managed identity. Used to disambiguate `DefaultAzureCredential` in Azure; typically not needed for local development because developer credentials are tried first. |
+| `AZURE_CLIENT_SECRET` | No | — | Deprecated legacy app-secret setting; Graph and Verified ID runtime auth now prefer managed identity via `DefaultAzureCredential`. |
+| `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<AZURE_TENANT_ID \|\| common>` | Optional authority override for Azure identity auth |
+| `VC_SERVICE_SCOPE` | No | `3db474b9-6a0c-4840-96ac-1fceb342124f/.default` | OAuth scope used for the Microsoft Entra Verified ID Request Service |
+| `VC_CREDENTIAL_MANIFEST_URL` | Yes (when issuing real credentials) | — | Public URL to the Verified ID credential manifest |
+| `VC_CREDENTIAL_TYPE` | No | `VerifiedEmployee` | Verified ID credential type name |
+| `VC_ISSUER_AUTHORITY` | Yes (when `DEMO_MODE=false`) | — | Verified ID issuer DID / authority |
+| `IDENTITYPASS_API_ENDPOINT` | No | `https://identitypass.microsoft.com/api/v1` | IdentityPass API base URL |
+| `IDENTITYPASS_SUBSCRIPTION_KEY` | Yes (outside demo or mock mode) | — | IdentityPass subscription key |
+| `IDENTITYPASS_MANAGER_EMAIL` | No | — | Default manager email used by IdentityPass-related flows |
+| `FIDO2_RP_NAME` | No | `Entra Verified ID Demo` | Display name for the FIDO2 / WebAuthn relying party |
+| `FIDO2_RP_ID` | No | `localhost` | Relying party ID (usually your domain in hosted environments) |
+| `FIDO2_ORIGIN` | No | `http://localhost:3000` | Full allowed origin for FIDO2 / WebAuthn |
+| `KEY_VAULT_URL` | No | — | Azure Key Vault URL used by the app configuration |
 
-> **Key Vault References:** In production App Service deployments, use Key Vault references for sensitive values:
-> ```
-> @Microsoft.KeyVault(SecretUri=https://kv-verifiedid.vault.azure.net/secrets/ClientSecret/)
-> ```
+> **Runtime vs CI auth:** `AZURE_CLIENT_ID` in app runtime configuration now identifies the Container App's **runtime** user-assigned managed identity for `DefaultAzureCredential`. This is separate from GitHub Actions CI/CD, which also uses a managed identity, but for deployment only.
+
+> **Legacy secret note:** The Container App template may still bind `AZURE_CLIENT_SECRET` as a Key Vault-backed secret while infra/bootstrap catches up, but the Graph and Verified ID services no longer require it for token acquisition.
 
 ---
 
 ## CI/CD
 
-For automated deployment with GitHub Actions, see the companion private repository:
+This repo includes:
 
-**[Spava-Corp/entra-verifiedid-deploy](https://github.com/Spava-Corp/entra-verifiedid-deploy)**
+- `.github/workflows/deploy-infrastructure.yml` for **manual infrastructure provisioning / what-if previews**
+- `.github/workflows/deploy.yml` for **application image build + Container App rollout**
 
-That repo contains:
-- GitHub Actions workflows for CI/CD to Azure App Service
-- Environment-specific configuration (staging, production, infrastructure)
-- Slot swap deployment strategy for zero-downtime releases
-- Secrets management via GitHub Environments
+Both workflows keep GitHub authentication on **UAMI + OIDC**. Infrastructure provisioning uses `az deployment group what-if` / `az deployment group create` against `infra/main.bicep`, while app delivery builds the repo image with **Azure Container Registry Tasks** (`az acr build`), pushes into the provisioned **ACR**, then updates the target Azure Container App with `az containerapp update`.
 
-### Authentication: UAMI Recommended
+### Infrastructure workflow
 
-When setting up CI/CD, use a **User-Assigned Managed Identity (UAMI)** with OIDC federation — not a service principal. UAMI is the Microsoft-recommended pattern for workload identity federation:
+Use `.github/workflows/deploy-infrastructure.yml`:
+
+- **Trigger:** `workflow_dispatch` only
+- **Inputs:**
+  - `environment`: `staging` or `production`
+  - `whatIf`: `true`/`false`, default `true`
+
+Run it once per environment before the first `.github/workflows/deploy.yml` rollout, then run it again after any Bicep infrastructure change. A successful non-what-if run:
+
+- deploys `infra/main.bicep` into `vars.AZURE_RESOURCE_GROUP`
+- writes key Bicep outputs to the Actions job summary
+- prints the exact `gh variable set ... --env <environment> --body "<value>"` commands needed by `.github/workflows/deploy.yml`
+
+The workflow prints commands for:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_RESOURCE_GROUP`
+- `AZURE_CONTAINER_APP_NAME`
+- `AZURE_CONTAINER_REGISTRY_NAME`
+- `AZURE_CONTAINER_REGISTRY_LOGIN_SERVER`
+- `AZURE_CONTAINER_APP_FQDN`
+
+It does **not** attempt to write GitHub variables automatically, and it does **not** grant Graph permissions.
+
+### Authentication: UAMI + OIDC
+
+Use a **User-Assigned Managed Identity (UAMI)** with GitHub OIDC federation — not a client-secret-based service principal. The one-time bootstrap for this repo lives in:
+
+```powershell
+.\scripts\07-bootstrap-github-actions-uami.ps1
+```
+
+Default bootstrap settings:
+
+- Resource group: `rg-entra-verifiedid-example`
+- Region: `centralus`
+- UAMI: `uami-entra-verifiedid-example-deploy`
+
+Required explicit inputs:
+
+- Tenant: pass `-TenantId <your-tenant-id>`
+- Subscription: pass `-SubscriptionId <your-subscription-id>`
+
+The script is idempotent and will:
+
+- create the resource group if it does not already exist
+- create the deployment UAMI if missing
+- add GitHub OIDC federated credentials for the `staging` and `production` environments used by `deploy.yml`
+- add a `refs/heads/main` branch federated credential for future non-environment jobs
+- assign **Contributor** on the **resource group only**
+- discover the deployed Container App and Azure Container Registry in that resource group
+- grant the Container App's system-assigned identity **AcrPull** on the ACR
+- print the exact **environment-scoped** `gh variable set` commands required by `azure/login@v2` and the deploy workflow
+
+After the deploy UAMI and seed environment variables exist, `.github/workflows/deploy-infrastructure.yml` can handle later Bicep applies from GitHub Actions using that same identity.
+
+No `AZURE_CLIENT_SECRET` repository secret is required for this workflow.
+
+> ⚠️ `scripts/08-grant-app-uami-graph-permissions.ps1` remains a **manual, local, Entra-admin-only** step. Do not expect any GitHub Actions workflow in this repo to perform Graph admin consent.
+
+Use **GitHub Environment variables** (not repository variables) for each deploy target such as `staging` and `production`:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_RESOURCE_GROUP`
+- `AZURE_CONTAINER_APP_NAME`
+- `AZURE_CONTAINER_REGISTRY_NAME`
+- `AZURE_CONTAINER_REGISTRY_LOGIN_SERVER`
+- `AZURE_CONTAINER_APP_FQDN` (optional but recommended for the environment URL shown in GitHub)
+
+If staging and production point at different Azure resource groups or Container Apps, run `scripts/07-bootstrap-github-actions-uami.ps1` once per environment so the printed `gh variable set --env <name>` commands contain the correct target-specific values.
 
 | | UAMI (Recommended) | Service Principal |
 |---|---|---|
 | **Client secret** | None — OIDC only | Required for some scenarios; expires ≤2 years |
 | **Credential surface** | Federated credentials only | Client secrets, certs, federated — any Entra app admin can add more |
-| **Managed by** | Azure RBAC (Contributor on the identity RG) | Entra ID (Application Administrator role) |
+| **Managed by** | Azure RBAC on the target app resource group | Entra ID app + Azure RBAC |
 | **Secret rotation** | Not applicable | Manual; missed rotation = broken pipelines or security risk |
 | **Blast radius** | Scoped to Azure resources only | Entra ID app registration + Azure resources |
 
-```bash
-# Create a UAMI and add OIDC federation (no secrets!)
-az identity create --name uami-verifiedid-deploy --resource-group rg-identity --location eastus2
-az identity federated-credential create \
-  --name github-main \
-  --identity-name uami-verifiedid-deploy \
-  --resource-group rg-identity \
-  --issuer "https://token.actions.githubusercontent.com" \
-  --subject "repo:<ORG>/<REPO>:ref:refs/heads/main" \
-  --audiences "api://AzureADTokenExchange"
+```powershell
+# Example: run with explicit tenant/subscription IDs
+.\scripts\07-bootstrap-github-actions-uami.ps1 `
+  -TenantId "<your-tenant-id>" `
+  -SubscriptionId "<your-subscription-id>"
+
+# The script prints commands like:
+gh variable set AZURE_CLIENT_ID --repo x3nc0n/entra-verifiedid-example --env staging --body "<uami-client-id>"
+gh variable set AZURE_TENANT_ID --repo x3nc0n/entra-verifiedid-example --env staging --body "<your-tenant-id>"
+gh variable set AZURE_SUBSCRIPTION_ID --repo x3nc0n/entra-verifiedid-example --env staging --body "<your-subscription-id>"
+gh variable set AZURE_RESOURCE_GROUP --repo x3nc0n/entra-verifiedid-example --env staging --body "rg-entra-verifiedid-example"
+gh variable set AZURE_CONTAINER_APP_NAME --repo x3nc0n/entra-verifiedid-example --env staging --body "<container-app-name>"
+gh variable set AZURE_CONTAINER_REGISTRY_NAME --repo x3nc0n/entra-verifiedid-example --env staging --body "<acr-name>"
+gh variable set AZURE_CONTAINER_REGISTRY_LOGIN_SERVER --repo x3nc0n/entra-verifiedid-example --env staging --body "<acr-name>.azurecr.io"
 ```
 
-See the [CI/CD deployment repo README](https://github.com/Spava-Corp/entra-verifiedid-deploy#1-configure-azure-oidc-authentication) for complete setup instructions including SP fallback.
+For broader deployment patterns, see the companion repo:
+
+**[Spava-Corp/entra-verifiedid-deploy](https://github.com/Spava-Corp/entra-verifiedid-deploy)**
 
 ---
 
@@ -519,17 +663,16 @@ See the [CI/CD deployment repo README](https://github.com/Spava-Corp/entra-verif
 
 ### Verified ID callback not receiving events
 
-- Verify `VERIFIED_ID_CALLBACK_URL` is publicly reachable (use `curl` or [webhook.site](https://webhook.site) to test)
-- Ensure the URL uses HTTPS — Entra Verified ID will not deliver to HTTP endpoints
-- Check that `VERIFIED_ID_CALLBACK_API_KEY` matches what was registered in the tenant configuration
-- App Service firewall rules must allow inbound traffic from Microsoft IP ranges
+- Verify `APP_BASE_URL` points to the public HTTPS origin of the app; the code derives callback URLs from it (for example `/api/issuance/callback` and `/api/verification/callback`)
+- Ensure that public origin uses HTTPS — Entra Verified ID will not deliver callbacks to HTTP endpoints
+- Confirm Container App ingress exposes the callback routes publicly over HTTPS
 
 ### QR code displayed but Authenticator won't scan
 
-- Ensure the Verified ID authority DID (`VERIFIED_ID_AUTHORITY`) matches the DID registered in your tenant
-- Check that the credential manifest URL is publicly accessible
+- Ensure the Verified ID authority DID (`VC_ISSUER_AUTHORITY`) matches the DID registered in your tenant
+- Check that `VC_CREDENTIAL_MANIFEST_URL` is publicly accessible
 - Verify Microsoft Authenticator is updated to the latest version
-- Inspect App Service logs: `az webapp log tail --resource-group <rg> --name <app-name>`
+- Inspect Container App logs: `az containerapp logs show --resource-group <rg> --name <app-name> --follow`
 
 ### Bootstrap script fails with "Insufficient privileges"
 
@@ -539,8 +682,8 @@ See the [CI/CD deployment repo README](https://github.com/Spava-Corp/entra-verif
 
 ### Passkey registration fails in browser
 
-- `WEBAUTHN_RP_ID` must exactly match the domain of the page performing registration
-- `WEBAUTHN_ORIGIN` must match the full origin (`https://` + domain)
+- `FIDO2_RP_ID` must exactly match the domain of the page performing registration
+- `FIDO2_ORIGIN` must match the full origin (`https://` + domain)
 - HTTPS is required — WebAuthn will not work on HTTP (except `localhost`)
 - For YubiKey: ensure the key is FIDO2-capable; FIDO U2F-only keys are not supported for Passkey registration
 

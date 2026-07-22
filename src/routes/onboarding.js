@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const config = require('../config');
 const identityPassService = require('../services/identitypass-service');
 const router = express.Router();
 
@@ -98,7 +99,16 @@ router.get('/approval-status', async (req, res) => {
     if (result.approved) {
       req.session.onboardingState.step = 'approved';
     }
-    res.json({ status: result.status, approved: result.approved });
+    res.json({
+      status: result.status,
+      approved: result.approved,
+      simulatedApproval: !!result.simulated,
+      message: config.demoMode
+        ? (result.approved
+          ? 'Demo Mode: approval was simulated automatically for this walkthrough.'
+          : 'Demo Mode: approval will be simulated automatically after a short delay.')
+        : undefined,
+    });
   } catch (err) {
     console.error('[onboarding] Approval status check failed:', err.message);
     res.json({ status: 'error', message: err.message });

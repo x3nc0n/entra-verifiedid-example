@@ -40,6 +40,10 @@
 .PARAMETER IdentityPassSubscriptionKey
     Ocp-Apim-Subscription-Key header value for IdentityPass API gateway.
 
+.PARAMETER KeyVaultName
+    Optional Key Vault name. When provided, IdentityPass secrets are persisted
+    there and the script returns secret references instead of plaintext values.
+
 .PARAMETER DeployLogicApp
     Deploy an Azure Logic App for the approval workflow.
 
@@ -75,6 +79,8 @@ param(
     [string]$IdentityPassApiKey      = "",
     [string]$IdentityPassSubscriptionKey = "",
 
+    [string]$KeyVaultName = "",
+
     [switch]$DeployLogicApp,
 
     [switch]$DemoMode
@@ -89,9 +95,13 @@ $ErrorActionPreference = "Stop"
 $isDemo = $DemoMode -or (-not $IdentityPassApiEndpoint) -or (-not $IdentityPassApiKey)
 
 $CALLBACK_BASE    = $AppServiceUrl.TrimEnd('/')
-$WEBHOOK_CALLBACK = "$CALLBACK_BASE/api/identitypass/webhook"
-$APPROVAL_CALLBACK = "$CALLBACK_BASE/api/identitypass/approval"
+$CALLBACK_PATH    = "/api/identitypass/callback"
+$WEBHOOK_CALLBACK = "$CALLBACK_BASE$CALLBACK_PATH"
+$APPROVAL_CALLBACK = "$CALLBACK_BASE$CALLBACK_PATH"
 $LOGIC_APP_NAME   = "la-verifiedid-approval"
+$API_KEY_SECRET_NAME = "identitypass-api-key"
+$SUBSCRIPTION_KEY_SECRET_NAME = "identitypass-key"
+$WEBHOOK_SECRET_NAME = "identitypass-webhook-secret"
 
 # ── IdentityPass Integration Reference ────────────────────────────────────────
 #
@@ -124,6 +134,7 @@ $LOGIC_APP_NAME   = "la-verifiedid-approval"
 Write-StepHeader "03 — IdentityPass Configuration" -Step "03"
 Write-Info "Portal URL: $AppServiceUrl"
 Write-Info "Webhook callback: $WEBHOOK_CALLBACK"
+Write-Info "Runtime callback path: $CALLBACK_PATH"
 
 if ($isDemo) {
     Write-Warning "DEMO MODE — using simulated identity verification (no IdentityPass API calls)"
@@ -161,7 +172,7 @@ if (-not $isDemo -and $IdentityPassApiEndpoint) {
             $webhookSecret = $webhookBody | ConvertFrom-Json | Select-Object -ExpandProperty secret
 
             Write-Success "Webhook registered (ID: $webhookId)"
-            Write-Warning "Save the webhook secret for HMAC signature validation!"
+            Write-Warning "Persist the webhook secret for HMAC signature validation before enabling real callbacks"
         } catch {
             Write-Warning "Webhook registration failed: $($_.Exception.Message)"
             Write-Info "You can register the webhook manually at: $IdentityPassApiEndpoint"
@@ -175,6 +186,46 @@ if (-not $isDemo -and $IdentityPassApiEndpoint) {
     Write-Success "[DEMO] Webhook configuration recorded"
     Write-Info "  Callback URL: $WEBHOOK_CALLBACK"
     Write-Info "  Events: verification.completed, verification.failed, verification.pending_review"
+}
+
+# ── Secret persistence / secure handoff ────────────────────────────────────────
+$identityPassApiKeyOutput = if ($IdentityPassApiKey) { ConvertTo-SecureString $IdentityPassApiKey -AsPlainText -Force } else { $null }
+$webhookSecretOutput = if ($webhookSecret) { ConvertTo-SecureString $webhookSecret -AsPlainText -Force } else { $null }
+$subscriptionKeyStoredInKeyVault = $false
+$apiKeyStoredInKeyVault = $false
+$webhookSecretStoredInKeyVault = $false
+
+if (-not $isDemo -and $KeyVaultName) {
+    $secretsToPersist = @{}
+    if ($IdentityPassApiKey) {
+        $secretsToPersist[$API_KEY_SECRET_NAME] = $identityPassApiKeyOutput
+    }
+    if ($IdentityPassSubscriptionKey) {
+        $secretsToPersist[$SUBSCRIPTION_KEY_SECRET_NAME] = (ConvertTo-SecureString $IdentityPassSubscriptionKey -AsPlainText -Force)
+    }
+    if ($webhookSecret) {
+        $secretsToPersist[$WEBHOOK_SECRET_NAME] = $webhookSecretOutput
+    }
+
+    foreach ($secretName in $secretsToPersist.Keys) {
+        try {
+            if ($PSCmdlet.ShouldProcess("$KeyVaultName/$secretName", "Persist IdentityPass secret to Key Vault")) {
+                Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -SecretValue $secretsToPersist[$secretName] | Out-Null
+                switch ($secretName) {
+                    $API_KEY_SECRET_NAME { $apiKeyStoredInKeyVault = $true }
+                    $SUBSCRIPTION_KEY_SECRET_NAME { $subscriptionKeyStoredInKeyVault = $true }
+                    $WEBHOOK_SECRET_NAME { $webhookSecretStoredInKeyVault = $true }
+                }
+                Write-Success "Key Vault secret set: $secretName"
+            }
+        } catch {
+            Write-Warning "Could not persist secret '$secretName' to Key Vault '$KeyVaultName': $($_.Exception.Message)"
+        }
+    }
+}
+
+if (-not $isDemo -and -not $KeyVaultName) {
+    Write-Warning "No Key Vault provided — API key and webhook secret will only be returned as SecureString values"
 }
 
 # ── Step 2: Approval Workflow (Logic App or simulated) ────────────────────────
@@ -198,7 +249,7 @@ if ($DeployLogicApp -and -not $isDemo) {
             # Trigger:  HTTP POST from portal when identity verification is approved
             # Actions:  1. Parse JSON payload
             #           2. Send Teams adaptive card to manager for approval
-            #           3. On approval → POST back to portal /api/approval/callback
+            #           3. On approval → POST back to portal /api/identitypass/callback
             #           4. On reject → POST rejection back to portal
             $logicAppDefinition = @{
                 '$schema'    = "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic/workflows/versions.json"
@@ -295,10 +346,13 @@ $endpointToUse = if ($isDemo) { "demo://simulated" } else { $IdentityPassApiEndp
 
 $output = @{
     IDENTITYPASS_ENDPOINT           = $endpointToUse
-    IDENTITYPASS_API_KEY            = if ($isDemo) { "demo-not-required" } else { $IdentityPassApiKey }
+    IDENTITYPASS_API_KEY            = if ($isDemo -or $apiKeyStoredInKeyVault) { $null } else { $identityPassApiKeyOutput }
+    IDENTITYPASS_API_KEY_SECRET_NAME = if ($isDemo) { "" } else { $API_KEY_SECRET_NAME }
     IDENTITYPASS_SUBSCRIPTION_KEY   = if ($isDemo) { "demo-not-required" } else { $IdentityPassSubscriptionKey }
+    IDENTITYPASS_SUBSCRIPTION_KEY_SECRET_NAME = if ($isDemo) { "" } else { $SUBSCRIPTION_KEY_SECRET_NAME }
     IDENTITYPASS_WEBHOOK_CALLBACK   = $WEBHOOK_CALLBACK
-    IDENTITYPASS_WEBHOOK_SECRET     = $webhookSecret
+    IDENTITYPASS_WEBHOOK_SECRET     = if ($isDemo -or $webhookSecretStoredInKeyVault) { $null } else { $webhookSecretOutput }
+    IDENTITYPASS_WEBHOOK_SECRET_SECRET_NAME = if ($isDemo) { "" } else { $WEBHOOK_SECRET_NAME }
     IDENTITYPASS_APPROVAL_URL       = $approvalWorkflowUrl
     IDENTITYPASS_DEMO_MODE          = $isDemo.ToString().ToLower()
 }
@@ -316,7 +370,7 @@ if ($isDemo) {
     Write-Host "     1. Obtain IdentityPass API credentials from your Microsoft account team" -ForegroundColor White
     Write-Host "     2. Re-run this script with -IdentityPassApiEndpoint and -IdentityPassApiKey" -ForegroundColor White
     Write-Host "     3. Ensure $WEBHOOK_CALLBACK is publicly accessible (use ngrok for local dev)" -ForegroundColor White
-    Write-Host "     4. Validate HMAC signature on incoming webhook events using IDENTITYPASS_WEBHOOK_SECRET" -ForegroundColor White
+    Write-Host "     4. Validate HMAC signature on incoming webhook events using the stored webhook secret" -ForegroundColor White
     Write-Host ""
 }
 

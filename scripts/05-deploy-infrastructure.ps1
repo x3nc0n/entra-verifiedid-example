@@ -9,32 +9,43 @@
       - Checks for Bicep CLI availability; falls back to azuredeploy.json if needed
       - Deploys infra/main.bicep (or the ARM fallback) via New-AzResourceGroupDeployment
       - Waits for deployment completion and surfaces any provisioning errors
-      - Retrieves deployment outputs (web app name/URL, Key Vault URI, App Insights key)
-      - Stores sensitive values as Key Vault secrets
-      - Builds a deployment ZIP and publishes the Node.js application via ZIP deploy
+      - Retrieves deployment outputs (Container App name/FQDN, Key Vault URI, ACR, App Insights key, runtime UAMI IDs)
+      - Stores the Entra ID / Verified ID / IdentityPass / FIDO2 configuration in Key Vault
+      - Pushes runtime configuration into the Bicep deployment parameters
+      - Leaves Microsoft Graph / Verified ID app-role grants for the post-deploy
+        runtime-UAMI permission step (scripts/08-grant-app-uami-graph-permissions.ps1)
+
+    This script does not publish the application image. The first real image
+    delivery happens through .github/workflows/deploy.yml (push to main /
+    workflow dispatch) or a manual az acr build + az containerapp update flow.
 
     Run independently or called from bootstrap.ps1.
 
 .PARAMETER ResourceGroupName
-    Azure resource group to deploy into.
+    Azure resource group to deploy into
+    (default: rg-entra-verifiedid-example).
 
 .PARAMETER Location
-    Azure region (default: eastus).
+    Azure region (default: centralus).
 
 .PARAMETER AppName
     Application name prefix for resource naming (3–20 lowercase alphanumeric chars).
 
 .PARAMETER TenantId
-    Azure AD / Entra ID tenant GUID.
+    Azure AD / Entra ID tenant GUID. Required for live runs; omitted by default
+    in this public example repo.
 
 .PARAMETER ClientId
-    App registration client ID (output of 01-configure-app-registration.ps1).
+    Legacy app registration client ID (output of 01-configure-app-registration.ps1).
+    Retained for compatibility; runtime auth now uses the Container App managed identity.
 
 .PARAMETER ClientSecret
-    App registration client secret as a SecureString (output of script 01).
+    Deprecated. Runtime auth now uses the Container App managed identity, so no
+    client secret is required.
 
 .PARAMETER SubscriptionId
-    Azure subscription GUID.
+    Azure subscription GUID. Required for live runs; omitted by default in
+    this public example repo.
 
 .PARAMETER VerifiedIdAuthority
     Verified ID authority DID (output of 02-configure-verified-id.ps1).
@@ -43,7 +54,7 @@
     Credential manifest URL (output of script 02).
 
 .PARAMETER CredentialType
-    Credential type name (default: EmployeeOnboardingCredential).
+    Credential type name (default: VerifiedEmployee).
 
 .PARAMETER IdentityPassEndpoint
     IdentityPass API endpoint (output of script 03; use "demo://simulated" for demo).
@@ -52,55 +63,52 @@
     IdentityPass subscription key as SecureString (leave as empty SecureString for demo).
 
 .PARAMETER Fido2RpId
-    FIDO2 relying party ID — typically the application domain (e.g. myapp.azurewebsites.net).
+    FIDO2 relying party ID — typically the public application domain
+    (for example: myapp.<env-hash>.centralus.azurecontainerapps.io).
 
 .PARAMETER Fido2Origin
-    FIDO2 allowed origin — the full HTTPS URL (e.g. https://myapp.azurewebsites.net).
+    FIDO2 allowed origin — the full HTTPS URL
+    (for example: https://myapp.<env-hash>.centralus.azurecontainerapps.io).
 
 .PARAMETER DemoMode
     Skip real deployments and print what would happen.
 
 .EXAMPLE
     .\05-deploy-infrastructure.ps1 `
-        -ResourceGroupName "rg-verifiedid-demo" `
+        -ResourceGroupName "rg-entra-verifiedid-example" `
         -AppName "entra-vid" `
-        -TenantId "xxxx" `
-        -ClientId "yyyy" `
+        -TenantId "<your-tenant-id>" `
+        -ClientId "<app-client-id>" `
         -ClientSecret (Read-Host -AsSecureString "Client secret") `
-        -SubscriptionId "zzzz"
+        -SubscriptionId "<your-subscription-id>"
 
 .OUTPUTS
     Hashtable with WebAppUrl, WebAppName, KeyVaultUrl, ResourceGroupName, AppInsightsKey, StorageAccount
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter(Mandatory)]
-    [string]$ResourceGroupName,
+    [string]$ResourceGroupName = "rg-entra-verifiedid-example",
 
-    [string]$Location = "eastus",
+    [string]$Location = "centralus",
 
     [Parameter(Mandatory)]
     [ValidateLength(3, 20)]
     [ValidatePattern('^[a-z0-9-]+$')]
     [string]$AppName,
 
-    [Parameter(Mandatory)]
-    [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
-    [string]$TenantId,
+    [AllowEmptyString()]
+    [string]$TenantId = "",
 
-    [Parameter(Mandatory)]
-    [string]$ClientId,
+    [string]$ClientId = "",
 
-    [Parameter(Mandatory)]
-    [System.Security.SecureString]$ClientSecret,
+    [System.Security.SecureString]$ClientSecret = $null,
 
-    [Parameter(Mandatory)]
-    [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
-    [string]$SubscriptionId,
+    [AllowEmptyString()]
+    [string]$SubscriptionId = "",
 
     [string]$VerifiedIdAuthority    = "",
     [string]$CredentialManifestUrl  = "",
-    [string]$CredentialType         = "EmployeeOnboardingCredential",
+    [string]$CredentialType         = "VerifiedEmployee",
     [string]$IdentityPassEndpoint   = "demo://simulated",
 
     [System.Security.SecureString]$IdentityPassSubscriptionKey = $null,
@@ -116,30 +124,53 @@ $ErrorActionPreference = "Stop"
 
 . "$PSScriptRoot\helpers\common.ps1"
 
+function Assert-ExplicitGuidParameter {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ParameterName,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        throw "$ParameterName is required for live runs. This public example repo does not ship a default $ParameterName. Pass -$ParameterName $placeholder explicitly."
+    }
+
+    if ($Value -notmatch '^[0-9a-fA-F-]{36}$') {
+        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        throw "$ParameterName must be a GUID. Pass -$ParameterName $placeholder explicitly."
+    }
+}
+
 # ── Derived paths ──────────────────────────────────────────────────────────────
 $infraRoot     = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".." "infra"))
 $bicepFile     = Join-Path $infraRoot "main.bicep"
 $armFallback   = Join-Path $infraRoot "azuredeploy.json"
-$projectRoot   = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$deploymentDir = Join-Path $projectRoot ".deployment"
-
 # Append a timestamp to keep deployment names unique while still being traceable
 $DEPLOYMENT_NAME = "verifiedid-$AppName-$(Get-Date -Format 'yyyyMMddHHmm')"
 
-# Resolve FIDO2 params — default to the expected App Service domain if not supplied
-$fido2RpIdValue   = if ($Fido2RpId)   { $Fido2RpId }   else { "$AppName.azurewebsites.net" }
-$fido2OriginValue = if ($Fido2Origin) { $Fido2Origin } else { "https://$AppName.azurewebsites.net" }
+# Resolve FIDO2 params — when a real public hostname is not supplied yet, use a
+# representative Container Apps hostname shape and update the URL outputs after
+# the deployment returns the actual FQDN.
+$fido2RpIdValue   = if ($Fido2RpId)   { $Fido2RpId }   else { "$AppName.<env-hash>.$Location.azurecontainerapps.io" }
+$fido2OriginValue = if ($Fido2Origin) { $Fido2Origin } else { "https://$fido2RpIdValue" }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 Write-StepHeader "05 — Azure Infrastructure Deployment" -Step "05"
 Write-Info "Resource group: $ResourceGroupName"
 Write-Info "Location:       $Location"
 Write-Info "App name:       $AppName"
-Write-Info "Subscription:   $SubscriptionId"
+Write-Info "Subscription:   $(if ($SubscriptionId) { $SubscriptionId } else { '(not provided)' })"
 Write-Info "Deployment:     $DEPLOYMENT_NAME"
 
 if ($DemoMode) {
     Write-Warning "DEMO MODE — no Azure resources will be created"
+} else {
+    Assert-ExplicitGuidParameter -ParameterName "TenantId" -Value $TenantId
+    Assert-ExplicitGuidParameter -ParameterName "SubscriptionId" -Value $SubscriptionId
 }
 
 # ── Step 1: Resource Group ─────────────────────────────────────────────────────
@@ -221,6 +252,12 @@ $webAppHostname = ""
 $keyVaultUri    = ""
 $appInsightsKey = ""
 $storageAccount = ""
+$containerRegistryName = ""
+$containerRegistryLoginServer = ""
+$containerAppPrincipalId = ""
+$appRuntimeManagedIdentityName = ""
+$appRuntimeManagedIdentityClientId = ""
+$appRuntimeManagedIdentityPrincipalId = ""
 
 if (-not $DemoMode -and $templateFile) {
     # Build the parameter hashtable — only include optional params when non-empty
@@ -233,8 +270,6 @@ if (-not $DemoMode -and $templateFile) {
         location              = $Location
         appName               = $AppName
         azureTenantId         = $TenantId
-        azureClientId         = $ClientId
-        azureClientSecret     = $ClientSecret
         credentialType        = $CredentialType
         fido2RpName           = $AppName
         fido2RpId             = $fido2RpIdValue
@@ -248,10 +283,6 @@ if (-not $DemoMode -and $templateFile) {
     if ($IdentityPassEndpoint -and $IdentityPassEndpoint -ne "demo://simulated") {
         $deployParams['identityPassEndpoint'] = $IdentityPassEndpoint
     }
-    if ($IdentityPassSubscriptionKey) {
-        $deployParams['identityPassSubscriptionKey'] = $IdentityPassSubscriptionKey
-    }
-
     if ($PSCmdlet.ShouldProcess($ResourceGroupName, "Deploy '$DEPLOYMENT_NAME'")) {
         Write-Progress-Step "Submitting deployment (this may take 5–10 minutes)..."
 
@@ -270,9 +301,28 @@ if (-not $DemoMode -and $templateFile) {
             $keyVaultUri    = $deployment.Outputs['keyVaultUri']?.Value     ?? ""
             $appInsightsKey = $deployment.Outputs['appInsightsKey']?.Value  ?? ""
             $storageAccount = $deployment.Outputs['storageAccountName']?.Value ?? ""
+            $containerRegistryName = $deployment.Outputs['containerRegistryName']?.Value ?? ""
+            $containerRegistryLoginServer = $deployment.Outputs['containerRegistryLoginServer']?.Value ?? ""
+            $containerAppPrincipalId = $deployment.Outputs['containerAppPrincipalId']?.Value ?? ""
+            $appRuntimeManagedIdentityName = $deployment.Outputs['appRuntimeManagedIdentityName']?.Value ?? ""
+            $appRuntimeManagedIdentityClientId = $deployment.Outputs['appRuntimeManagedIdentityClientId']?.Value ?? ""
+            $appRuntimeManagedIdentityPrincipalId = $deployment.Outputs['appRuntimeManagedIdentityPrincipalId']?.Value ?? ""
 
-            Write-Info "Web app:    $webAppHostname"
+            Write-Info "Container App: $webAppHostname"
             Write-Info "Key Vault:  $keyVaultUri"
+            Write-Info "ACR:        $containerRegistryLoginServer"
+            if ($containerAppPrincipalId) {
+                Write-Info "Container App system-assigned principal: $containerAppPrincipalId"
+            }
+            if ($appRuntimeManagedIdentityName) {
+                Write-Info "Runtime UAMI: $appRuntimeManagedIdentityName"
+            }
+            if ($appRuntimeManagedIdentityClientId) {
+                Write-Info "Runtime UAMI client ID: $appRuntimeManagedIdentityClientId"
+            }
+            if ($appRuntimeManagedIdentityPrincipalId) {
+                Write-Info "Runtime UAMI principal ID: $appRuntimeManagedIdentityPrincipalId"
+            }
             if ($appInsightsKey.Length -ge 8) {
                 Write-Info "App Insights key: $($appInsightsKey.Substring(0,8))..."
             }
@@ -287,14 +337,28 @@ if (-not $DemoMode -and $templateFile) {
 
 } elseif ($DemoMode) {
     Write-Success "[DEMO] Would deploy template '$DEPLOYMENT_NAME' to $ResourceGroupName"
-    $webAppName     = "$AppName-webapp"
-    $webAppHostname = "$AppName.azurewebsites.net"
+    $webAppName     = "$AppName-app"
+    $webAppHostname = "$AppName.demo.$Location.azurecontainerapps.io"
     $keyVaultUri    = "https://kv-$AppName.vault.azure.net/"
     $appInsightsKey = "demo-instrumentation-key-$(New-Guid)"
     $storageAccount = "$($AppName.Replace('-', ''))storage"
+    $containerRegistryName = "$($AppName.Replace('-', ''))acr"
+    $containerRegistryLoginServer = "$containerRegistryName.azurecr.io"
+    $containerAppPrincipalId = "demo-container-app-system-principal"
+    $appRuntimeManagedIdentityName = "uami-$AppName-app"
+    $appRuntimeManagedIdentityClientId = "demo-runtime-uami-client-id"
+    $appRuntimeManagedIdentityPrincipalId = "demo-runtime-uami-principal-id"
 }
 
-$webAppUrl = if ($webAppHostname) { "https://$webAppHostname" } else { "https://$AppName.azurewebsites.net" }
+$webAppUrl = if ($webAppHostname) { "https://$webAppHostname" } else { "https://$AppName.demo.$Location.azurecontainerapps.io" }
+
+if (-not $Fido2RpId -and $webAppHostname) {
+    $fido2RpIdValue = $webAppHostname
+}
+
+if (-not $Fido2Origin -and $webAppUrl) {
+    $fido2OriginValue = $webAppUrl
+}
 
 # ── Step 4: Configure Key Vault Secrets ───────────────────────────────────────
 Write-StepHeader "Configuring Key Vault secrets"
@@ -304,12 +368,21 @@ if (-not $DemoMode -and $keyVaultUri) {
     $vaultName = ([System.Uri]$keyVaultUri).Host -replace '\.vault\.azure\.net$', ''
     Write-Progress-Step "Writing secrets to Key Vault: $vaultName"
 
-    # These secrets supplement what Bicep already stores during provisioning
+    # These secrets supplement what Bicep already stores during provisioning and
+    # preserve the canonical runtime contract generated by bootstrap.ps1.
     $extraSecrets = [ordered]@{
-        "AzureClientSecret"           = $ClientSecret
+        "azure-tenant-id"               = $TenantId
+        "vc-issuer-authority"           = $VerifiedIdAuthority
+        "vc-credential-manifest-url"    = $CredentialManifestUrl
+        "vc-credential-type"            = $CredentialType
+        "identitypass-api-endpoint"     = $IdentityPassEndpoint
+        "fido2-rp-name"                 = $AppName
+        "fido2-rp-id"                   = $fido2RpIdValue
+        "fido2-origin"                  = $fido2OriginValue
+        "app-base-url"                  = $webAppUrl
     }
     if ($IdentityPassSubscriptionKey) {
-        $extraSecrets["IdentityPassSubscriptionKey"] = $IdentityPassSubscriptionKey
+        $extraSecrets["identitypass-key"] = $IdentityPassSubscriptionKey
     }
 
     foreach ($secretName in $extraSecrets.Keys) {
@@ -333,120 +406,37 @@ if (-not $DemoMode -and $keyVaultUri) {
     Write-Warning "Key Vault URI not available — skipping secret configuration"
 }
 
-# ── Step 5: Deploy Application Code ───────────────────────────────────────────
-Write-StepHeader "Deploying application code"
+# ── Step 5: Runtime UAMI Graph app-role handoff ───────────────────────────────
+Write-StepHeader "Runtime UAMI Graph app-role handoff"
 
-if (-not $DemoMode -and $webAppName) {
-    $zipPath    = Join-Path $deploymentDir "app.zip"
-    $stagingDir = Join-Path $deploymentDir "staging"
-
-    if ($PSCmdlet.ShouldProcess($zipPath, "Create deployment ZIP")) {
-        try {
-            # Ensure production dependencies are installed
-            Write-Progress-Step "Running npm install --omit=dev"
-            Push-Location $projectRoot
-            try {
-                npm install --omit=dev 2>&1 | ForEach-Object { Write-Verbose $_ }
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "npm install returned exit code $LASTEXITCODE — continuing"
-                }
-            } finally {
-                Pop-Location
-            }
-
-            # Create a clean staging directory
-            if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
-            New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
-
-            # Exclude dev-only and sensitive paths from the deployment package
-            $excludedTopLevel = @('.git', '.deployment', 'scripts', 'infra', '.azure')
-            $excludedFiles    = @('.env', '.env.local', '.env.production', '.gitignore')
-            $excludedPatterns = @('*.md', '*.bicep', '*.test.js', 'jest.config*', '.eslintrc*')
-
-            Write-Progress-Step "Staging deployment files"
-            Get-ChildItem -Path $projectRoot -Recurse | Where-Object {
-                -not $_.PSIsContainer
-            } | Where-Object {
-                $rel      = $_.FullName.Substring($projectRoot.Length).TrimStart('\', '/')
-                $topLevel = $rel.Split([IO.Path]::DirectorySeparatorChar)[0]
-
-                -not ($topLevel -in $excludedTopLevel) -and
-                -not ($_.Name -in $excludedFiles) -and
-                -not ($excludedPatterns | Where-Object { $_.Name -like $_ })
-            } | ForEach-Object {
-                $relPath = $_.FullName.Substring($projectRoot.Length).TrimStart('\', '/')
-                $dest    = Join-Path $stagingDir $relPath
-                $destDir = Split-Path $dest -Parent
-                if (-not (Test-Path $destDir)) {
-                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-                }
-                Copy-Item $_.FullName -Destination $dest -Force
-            }
-
-            # Compress the staging directory
-            if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-            Compress-Archive -Path "$stagingDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
-            $zipSizeKb = [math]::Round((Get-Item $zipPath).Length / 1KB, 0)
-            Write-Success "Deployment ZIP created: $zipSizeKb KB"
-
-        } catch {
-            Write-Warning "ZIP creation failed: $($_.Exception.Message)"
-            Write-Info "Skipping code deployment — deploy manually or via GitHub Actions"
-        } finally {
-            # Always clean up the staging directory
-            if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
-        }
-    }
-
-    if ((Test-Path $zipPath) -and $PSCmdlet.ShouldProcess($webAppName, "Deploy application ZIP")) {
-        Write-Progress-Step "Publishing to App Service: $webAppName"
-        $deployed = $false
-
-        # Primary: Publish-AzWebApp (Az.Websites module)
-        try {
-            Publish-AzWebApp `
-                -ResourceGroupName $ResourceGroupName `
-                -Name $webAppName `
-                -ArchivePath $zipPath `
-                -Force | Out-Null
-            Write-Success "Application deployed: $webAppUrl"
-            $deployed = $true
-        } catch {
-            Write-Warning "Publish-AzWebApp failed: $($_.Exception.Message)"
-        }
-
-        # Fallback: az webapp deployment source config-zip (Azure CLI)
-        if (-not $deployed) {
-            Write-Info "Attempting fallback via Azure CLI..."
-            try {
-                $azOutput = az webapp deployment source config-zip `
-                    --resource-group $ResourceGroupName `
-                    --name $webAppName `
-                    --src $zipPath 2>&1
-
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Success "Application deployed via Azure CLI: $webAppUrl"
-                    $deployed = $true
-                } else {
-                    throw $azOutput
-                }
-            } catch {
-                Write-Warning "Azure CLI deployment also failed: $_"
-                Write-Info "Deploy manually:"
-                Write-Info "  az webapp deployment source config-zip --resource-group $ResourceGroupName --name $webAppName --src $zipPath"
-            }
-        }
-    }
-
-    # Clean up deployment artefacts
-    if (Test-Path $deploymentDir) {
-        Remove-Item $deploymentDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-} elseif ($DemoMode) {
-    Write-Success "[DEMO] Would package and deploy application to: $webAppName"
+if ($DemoMode) {
+    Write-Success "[DEMO] Runtime UAMI app-role grants are deferred to scripts/08-grant-app-uami-graph-permissions.ps1"
+} elseif ($appRuntimeManagedIdentityPrincipalId) {
+    Write-Warning "The runtime app UAMI still needs Microsoft Graph + Verified ID Request Service app-role grants."
+    Write-Info "Run scripts/08-grant-app-uami-graph-permissions.ps1 after deployment using the runtime UAMI principal ID below."
+    Write-Info "This requires a Microsoft Graph admin-consent-equivalent operator (Global Administrator / Privileged Role Administrator or equivalent app-role assignment rights)."
+    Write-Info "Runtime UAMI principal ID: $appRuntimeManagedIdentityPrincipalId"
 } else {
-    Write-Warning "Web app name not available — skipping code deployment"
+    Write-Warning "Runtime UAMI principal ID not available — scripts/08-grant-app-uami-graph-permissions.ps1 will need -IdentityName or -AppRuntimeIdentityPrincipalId."
+}
+
+# ── Step 6: Delivery Handoff ───────────────────────────────────────────────────
+Write-StepHeader "Application image delivery handoff"
+
+if ($DemoMode) {
+    Write-Success "[DEMO] Infrastructure only — application image delivery remains a CI/CD concern"
+} elseif ($webAppName) {
+    Write-Info "The infrastructure is ready, but this script does not publish the application image."
+    Write-Info "First image delivery options:"
+    Write-Info "  1. Push to main or run .github/workflows/deploy.yml manually"
+    if ($containerRegistryName -and $containerRegistryLoginServer) {
+        Write-Info "  2. Manual bootstrap: az acr build --registry $containerRegistryName --image $AppName:manual ."
+        Write-Info "     then: az containerapp update --resource-group $ResourceGroupName --name $webAppName --image $containerRegistryLoginServer/$AppName:manual"
+    } else {
+        Write-Info "  2. Manual bootstrap: az acr build ... then az containerapp update ..."
+    }
+} else {
+    Write-Warning "Container App name not available — unable to print image delivery handoff commands"
 }
 
 # ── Output Summary ─────────────────────────────────────────────────────────────
@@ -457,6 +447,12 @@ $output = @{
     ResourceGroupName = $ResourceGroupName
     AppInsightsKey    = $appInsightsKey
     StorageAccount    = $storageAccount
+    ContainerRegistryName = $containerRegistryName
+    ContainerRegistryLoginServer = $containerRegistryLoginServer
+    ContainerAppPrincipalId = $containerAppPrincipalId
+    AppRuntimeManagedIdentityName = $appRuntimeManagedIdentityName
+    AppRuntimeManagedIdentityClientId = $appRuntimeManagedIdentityClientId
+    AppRuntimeManagedIdentityPrincipalId = $appRuntimeManagedIdentityPrincipalId
 }
 
 Format-Summary -Title "Infrastructure Deployment Output" -Values @{
@@ -468,13 +464,15 @@ Format-Summary -Title "Infrastructure Deployment Output" -Values @{
                             "$($appInsightsKey.Substring(0, 8))..."
                         } else { $appInsightsKey }
     StorageAccount    = $storageAccount
+    ContainerRegistry = $containerRegistryLoginServer
 }
 
 Write-Host ""
 Write-Host "  📋 Post-Deployment Steps:" -ForegroundColor Cyan
-Write-Host "     1. Verify the app is running: $webAppUrl" -ForegroundColor White
-Write-Host "     2. Configure the custom domain and SSL certificate (if needed)" -ForegroundColor White
-Write-Host "     3. Upload the DID document to https://$fido2RpIdValue/.well-known/did-configuration.json" -ForegroundColor White
+Write-Host "     1. Review the Container App URL: $webAppUrl" -ForegroundColor White
+Write-Host "     2. Publish the first real image via .github/workflows/deploy.yml or manual az acr build + az containerapp update" -ForegroundColor White
+Write-Host "     3. Re-run the pre-infra bootstrap steps with the actual public URL if you used a placeholder Container Apps FQDN shape" -ForegroundColor White
+Write-Host "     4. Upload the DID document to https://$fido2RpIdValue/.well-known/did-configuration.json" -ForegroundColor White
 Write-Host ""
 
 return $output
