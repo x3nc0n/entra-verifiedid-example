@@ -5,6 +5,9 @@ targetScope = 'resourceGroup'
 @description('Azure region for all resources.')
 param location string = resourceGroup().location
 
+@description('Azure region for the Container Apps managed environment and Container App. Defaults to the same region as everything else, but can be overridden independently if that specific region lacks Container Apps capacity.')
+param containerAppLocation string = location
+
 @description('Application name prefix used for resource naming.')
 @minLength(3)
 @maxLength(20)
@@ -91,7 +94,7 @@ module appRuntimeIdentity 'modules/user-assigned-identity.bicep' = {
 module containerApp 'modules/container-app.bicep' = {
   name: 'containerApp'
   params: {
-    location: location
+    location: containerAppLocation
     appName: appName
     azureTenantId: azureTenantId
     verifiedIdAuthority: verifiedIdAuthority

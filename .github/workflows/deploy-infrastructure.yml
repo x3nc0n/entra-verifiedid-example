@@ -59,7 +59,7 @@ jobs:
           echo "Running az deployment group what-if for environment '${{ inputs.environment }}'..."
           parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
           if [ -n "${{ inputs.location }}" ]; then
-            parameters+=(--parameters location="${{ inputs.location }}")
+            parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi
           az deployment group what-if \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -92,7 +92,7 @@ jobs:
           echo "Deploying infra/main.bicep to resource group '$AZURE_RESOURCE_GROUP'..."
           parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
           if [ -n "${{ inputs.location }}" ]; then
-            parameters+=(--parameters location="${{ inputs.location }}")
+            parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi
           az deployment group create \
             --resource-group "$AZURE_RESOURCE_GROUP" \
