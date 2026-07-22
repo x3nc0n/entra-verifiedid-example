@@ -311,7 +311,7 @@
           "containers": [
             {
               "name": "portal",
-              "image": "mcr.microsoft.com/mirror/docker/library/node:20-alpine",
+              "image": "mcr.microsoft.com/mirror/docker/library/node:20-bookworm-slim",
               "command": [
                 "node"
               ],
