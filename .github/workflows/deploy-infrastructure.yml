@@ -16,6 +16,11 @@ on:
         required: true
         default: true
         type: boolean
+      location:
+        description: Azure region override for this deployment (leave empty to use the resource group's default region). Use this if you hit a regional capacity error like AKSCapacityHeavyUsage.
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: deploy-infrastructure-${{ inputs.environment }}
@@ -52,11 +57,15 @@ jobs:
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
         run: |
           echo "Running az deployment group what-if for environment '${{ inputs.environment }}'..."
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
+          if [ -n "${{ inputs.location }}" ]; then
+            parameters+=(--parameters location="${{ inputs.location }}")
+          fi
           az deployment group what-if \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$DEPLOYMENT_NAME" \
             --template-file infra/main.bicep \
-            --parameters azureTenantId="$AZURE_TENANT_ID" \
+            "${parameters[@]}" \
             --no-pretty-print \
             --only-show-errors
 
@@ -81,11 +90,15 @@ jobs:
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
         run: |
           echo "Deploying infra/main.bicep to resource group '$AZURE_RESOURCE_GROUP'..."
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
+          if [ -n "${{ inputs.location }}" ]; then
+            parameters+=(--parameters location="${{ inputs.location }}")
+          fi
           az deployment group create \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$DEPLOYMENT_NAME" \
             --template-file infra/main.bicep \
-            --parameters azureTenantId="$AZURE_TENANT_ID" \
+            "${parameters[@]}" \
             --only-show-errors \
             --output json > deploy-infrastructure-result.json
 
