@@ -129,6 +129,70 @@ jobs:
           import json, sys
           with open('azuredeploy.json') as f:
               arm = json.load(f)
+          variables = arm.get('variables', {})
+          quote_chars = (chr(39), chr(34))
+
+          def is_arm_expression(value):
+              return isinstance(value, str) and value.startswith('[') and value.endswith(']')
+
+          def split_args(value):
+              parts = []
+              current = []
+              depth = 0
+              in_quote = None
+              i = 0
+              while i < len(value):
+                  ch = value[i]
+                  if in_quote:
+                      current.append(ch)
+                      if ch == in_quote:
+                          in_quote = None
+                  elif ch in quote_chars:
+                      in_quote = ch
+                      current.append(ch)
+                  elif ch == '(':
+                      depth += 1
+                      current.append(ch)
+                  elif ch == ')':
+                      depth -= 1
+                      current.append(ch)
+                  elif ch == ',' and depth == 0:
+                      parts.append(''.join(current).strip())
+                      current = []
+                  else:
+                      current.append(ch)
+                  i += 1
+              if current:
+                  parts.append(''.join(current).strip())
+              return parts
+
+          def resolve_expression(expr, stack=None, allow_symbolic=False):
+              stack = stack or []
+              expr = expr.strip()
+              if len(expr) >= 2 and expr[0] == expr[-1] and expr[0] in quote_chars:
+                  return expr[1:-1]
+              if expr.lower().startswith('variables(') and expr.endswith(')'):
+                  inner = expr[len('variables('):-1].strip()
+                  if len(inner) < 2 or inner[0] != inner[-1] or inner[0] not in quote_chars:
+                      raise ValueError(f'Unsupported variables() reference: {expr}')
+                  name = inner[1:-1]
+                  if name in stack:
+                      raise ValueError('Circular variable reference detected: ' + ' -> '.join(stack + [name]))
+                  if name not in variables:
+                      raise ValueError(f'Variable not found: {name}')
+                  return resolve_value(variables[name], stack + [name], allow_symbolic=allow_symbolic)
+              if expr.lower().startswith('concat(') and expr.endswith(')'):
+                  inner = expr[len('concat('):-1]
+                  return ''.join(resolve_expression(part, stack, allow_symbolic=allow_symbolic) for part in split_args(inner))
+              if allow_symbolic:
+                  return f'<unresolved:{expr}>'
+              raise ValueError(f'Unsupported ARM expression: {expr}')
+
+          def resolve_value(value, stack=None, allow_symbolic=False):
+              if is_arm_expression(value):
+                  return resolve_expression(value[1:-1], stack=stack, allow_symbolic=allow_symbolic)
+              return value
+
           apps = [r for r in arm.get('resources', []) if r.get('type') == 'Microsoft.App/containerApps']
           if len(apps) != 1:
               print('ERROR: Expected exactly one Container App resource')
@@ -140,15 +204,29 @@ jobs:
               print('ERROR: Container App is missing registry configuration')
               sys.exit(1)
           registry = registries[0]
-          if registry.get('identity') != 'system':
+          try:
+              registry_identity = resolve_value(registry.get('identity', ''))
+          except ValueError as exc:
+              print('ERROR: Failed to resolve Container App registry identity:', exc)
+              sys.exit(1)
+          if registry_identity != 'system':
               print('ERROR: Container App registry auth must use the system-assigned identity')
               sys.exit(1)
-          server = registry.get('server', '')
+          try:
+              server = resolve_value(registry.get('server', ''), allow_symbolic=True)
+          except ValueError as exc:
+              print('ERROR: Failed to resolve Container App registry server:', exc)
+              sys.exit(1)
           if '.azurecr.io' not in server:
               print('ERROR: Container App registry server is not an Azure Container Registry:', server)
               sys.exit(1)
           args = app.get('properties', {}).get('template', {}).get('containers', [{}])[0].get('args', [])
-          if 'npm start' in args:
+          try:
+              resolved_args = [resolve_value(arg, allow_symbolic=True) if isinstance(arg, str) else arg for arg in args]
+          except ValueError as exc:
+              print('ERROR: Failed to resolve Container App bootstrap args:', exc)
+              sys.exit(1)
+          if 'npm start' in resolved_args:
               print('ERROR: Placeholder runtime still uses npm start on a base image')
               sys.exit(1)
           print('Container App registry wiring and bootstrap placeholder are coherent')
