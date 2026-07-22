@@ -128,6 +128,7 @@ jobs:
               "AZURE_CONTAINER_APP_FQDN": outputs.get("webAppHostname", {}).get("value", ""),
               "AZURE_CONTAINER_REGISTRY_NAME": outputs.get("containerRegistryName", {}).get("value", ""),
               "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": outputs.get("containerRegistryLoginServer", {}).get("value", ""),
+              "KEY_VAULT_URL": outputs.get("keyVaultUri", {}).get("value", ""),
               "APP_RUNTIME_UAMI_NAME": outputs.get("appRuntimeManagedIdentityName", {}).get("value", ""),
               "APP_RUNTIME_UAMI_CLIENT_ID": outputs.get("appRuntimeManagedIdentityClientId", {}).get("value", ""),
               "APP_RUNTIME_UAMI_PRINCIPAL_ID": outputs.get("appRuntimeManagedIdentityPrincipalId", {}).get("value", ""),
@@ -143,6 +144,7 @@ jobs:
               "AZURE_CONTAINER_REGISTRY_NAME": resolved["AZURE_CONTAINER_REGISTRY_NAME"],
               "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": resolved["AZURE_CONTAINER_REGISTRY_LOGIN_SERVER"],
               "AZURE_CONTAINER_APP_FQDN": resolved["AZURE_CONTAINER_APP_FQDN"],
+              "KEY_VAULT_URL": resolved["KEY_VAULT_URL"],
           }
 
           env_name = os.environ["TARGET_ENVIRONMENT"]
@@ -160,6 +162,7 @@ jobs:
               summary.write(f"| Container App FQDN | {md(resolved['AZURE_CONTAINER_APP_FQDN'])} |\n")
               summary.write(f"| ACR name | {md(resolved['AZURE_CONTAINER_REGISTRY_NAME'])} |\n")
               summary.write(f"| ACR login server | {md(resolved['AZURE_CONTAINER_REGISTRY_LOGIN_SERVER'])} |\n")
+              summary.write(f"| Key Vault URL | {md(resolved['KEY_VAULT_URL'])} |\n")
               summary.write(f"| App runtime UAMI name | {md(resolved['APP_RUNTIME_UAMI_NAME'])} |\n")
               summary.write(f"| App runtime UAMI client ID | {md(resolved['APP_RUNTIME_UAMI_CLIENT_ID'])} |\n")
               summary.write(f"| App runtime UAMI principal ID | {md(resolved['APP_RUNTIME_UAMI_PRINCIPAL_ID'])} |\n")

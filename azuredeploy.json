@@ -280,8 +280,7 @@
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]",
         "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
-        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]",
-        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('kvName'), 'identitypass-key')]"
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
       ],
       "properties": {
         "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
@@ -296,13 +295,6 @@
           "registries": [
             {
               "server": "[variables('acrLoginServer')]",
-              "identity": "system"
-            }
-          ],
-          "secrets": [
-            {
-              "name": "identitypass-key",
-              "keyVaultUrl": "[concat('https://', variables('kvName'), '.vault.azure.net/secrets/identitypass-key')]",
               "identity": "system"
             }
           ]
@@ -355,10 +347,6 @@
                 {
                   "name": "IDENTITYPASS_API_ENDPOINT",
                   "value": "[parameters('identityPassEndpoint')]"
-                },
-                {
-                  "name": "IDENTITYPASS_SUBSCRIPTION_KEY",
-                  "secretRef": "identitypass-key"
                 },
                 {
                   "name": "FIDO2_RP_NAME",

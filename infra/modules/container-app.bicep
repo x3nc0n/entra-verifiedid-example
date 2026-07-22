@@ -54,15 +54,11 @@ param appRuntimeManagedIdentityResourceId string
 @description('Client ID of the app runtime user-assigned managed identity.')
 param appRuntimeManagedIdentityClientId string
 
-@description('Key Vault secret name for the IdentityPass key.')
-param kvNameIdentityPass string = 'identitypass-key'
-
 // ── Variables ──────────────────────────────────────────────────────────────────
 
 var containerAppEnvironmentName = '${appName}-cae'
 var containerAppName = '${appName}-app'
 var logAnalyticsWorkspaceName = last(split(logAnalyticsWorkspaceId, '/'))
-var identityPassSecretUri = '${keyVaultUrl}secrets/${kvNameIdentityPass}'
 
 resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: logAnalyticsWorkspaceName
@@ -119,13 +115,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
       ]
-      secrets: [
-        {
-          name: kvNameIdentityPass
-          keyVaultUrl: identityPassSecretUri
-          identity: 'system'
-        }
-      ]
     }
     template: {
       containers: [
@@ -149,7 +138,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'VC_CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
             { name: 'VC_CREDENTIAL_TYPE', value: credentialType }
             { name: 'IDENTITYPASS_API_ENDPOINT', value: identityPassEndpoint }
-            { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', secretRef: kvNameIdentityPass }
             { name: 'FIDO2_RP_NAME', value: fido2RpName }
             { name: 'FIDO2_RP_ID', value: fido2RpId }
             { name: 'FIDO2_ORIGIN', value: fido2Origin }

@@ -96,6 +96,20 @@ jobs:
             --image "${{ steps.image.outputs.image }}" \
             --only-show-errors
 
+      - name: Configure Key Vault-backed secrets
+        shell: bash
+        run: |
+          az containerapp secret set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --secrets "identitypass-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/identitypass-key,identityref:system" \
+            --only-show-errors
+          az containerapp update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --set-env-vars "IDENTITYPASS_SUBSCRIPTION_KEY=secretref:identitypass-key" \
+            --only-show-errors
+
       - name: Resolve staging FQDN
         id: fqdn
         shell: bash
@@ -177,6 +191,20 @@ jobs:
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --image "${{ steps.image.outputs.image }}" \
+            --only-show-errors
+
+      - name: Configure Key Vault-backed secrets
+        shell: bash
+        run: |
+          az containerapp secret set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --secrets "identitypass-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/identitypass-key,identityref:system" \
+            --only-show-errors
+          az containerapp update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --set-env-vars "IDENTITYPASS_SUBSCRIPTION_KEY=secretref:identitypass-key" \
             --only-show-errors
 
       - name: Resolve production FQDN
