@@ -1185,3 +1185,70 @@ The script remains idempotent by checking for an existing role assignment before
 
 `Role Based Access Control Administrator` is the least-privilege fit here: it allows the deploy identity to create and delete role assignments within scope, but it is narrower than `User Access Administrator` and cannot grant `Owner` or `User Access Administrator`.
 
+### 2026-07-22: Trinity: Graph scope check fix for raw access-token auth
+**By:** Trinity
+**Source:** `trinity-graph-scope-check-accesstoken-fix.md`
+
+- Date: 2026-07-22
+- Area: PowerShell bootstrap scripts / Microsoft Graph auth
+
+## Decision
+
+Correct `Assert-RequiredScopes` in `scripts/helpers/common.ps1` so Graph delegated scope validation treats `*.ReadWrite*` as satisfying the corresponding `*.Read*` requirement for the same permission prefix, while keeping exact-match validation for everything else.
+
+## Why
+
+The previous diagnosis in commit `4084126` was wrong. Re-verification showed that `Connect-MgGraph -AccessToken ...` can populate `Get-MgContext().Scopes` correctly for the Azure CLI-issued delegated token used here.
+
+The actual failure was a naive exact-string comparison in `Assert-RequiredScopes`: `08-grant-app-uami-graph-permissions.ps1` required `Application.Read.All`, while the caller's token contained `Application.ReadWrite.All`. That granted scope is a strict privilege superset for the same permission family, but the old helper still marked it missing because the literal strings differ.
+
+## Implementation
+
+- Added a small helper that evaluates whether a granted scope satisfies a required scope.
+- Exact matches still pass unchanged.
+- A required `X.Read.All` is now satisfied by granted `X.ReadWrite.All`.
+- A required `X.Read` is now satisfied by granted `X.ReadWrite`.
+- Prefixes must still match exactly, so unrelated scopes such as `AuditLog.Read.All` do not satisfy `Application.Read.All`.
+- The earlier `UserProvidedAccessToken` / empty-Scopes warning branch remains only as a defensive fallback for sessions where `Get-MgContext` truly exposes no scopes; it is no longer the primary fix or root-cause explanation.
+
+## Impact
+
+- Fixes the false negative in `scripts/08-grant-app-uami-graph-permissions.ps1` for Azure CLI-issued delegated Graph tokens that include `Application.ReadWrite.All` but not the narrower literal `Application.Read.All`.
+- Keeps all existing call sites backward compatible because the new behavior is only an additive relaxation from `Read` to matching `ReadWrite`; it never treats `Read` as satisfying `ReadWrite`, and it never crosses permission prefixes.
+
+### 2026-07-22: Trinity: Dynamic Graph/VCS app role resolution by name
+**By:** Trinity
+**Source:** `trinity-vcs-role-id-fix.md`
+
+- Date: 2026-07-22
+- Area: PowerShell permission-grant automation / Entra service principals
+
+## Decision
+
+Stop hardcoding Microsoft Graph and Verified ID Request Service app-role GUIDs in `scripts/08-grant-app-uami-graph-permissions.ps1`. Store only the role value strings and resolve the current tenant's role IDs dynamically from the target resource service principal's `AppRoles` collection at runtime.
+
+## Why
+
+Live execution against the Spaid Family tenant proved the previously hardcoded Verified ID Request Service role IDs were stale/incorrect. The script requested the correct permission names, but it submitted GUIDs that did not exist on that tenant's `Verifiable Credentials Service Request` service principal, which produced a generic Graph `400 BadRequest` (`Permission being assigned was not found on application ...`).
+
+Hardcoding these IDs is fragile even when it appears to work, because the real source of truth during assignment is the resource service principal present in the tenant being targeted. Resolving by `AppRoles.Value` makes failures deterministic and diagnosable.
+
+## Implementation
+
+- Changed both `$GRAPH_APP_ROLES` and `$VCS_REQUEST_APP_ROLES` to arrays of role-name strings only.
+- Updated `Get-ResourceServicePrincipal` to fetch the resource service principal with `appRoles` included.
+- Updated `Grant-AppRolesToPrincipal` to:
+  - accept role names instead of `{ Id, Name }` objects
+  - look up the live app-role object with `Where-Object { $_.Value -eq $roleName }`
+  - use the resolved `Id` for duplicate detection and assignment
+  - throw a clear error listing available roles when a requested role name is missing
+
+## Live tenant reference
+
+Verified ID Request Service (`appId 3db474b9-6a0c-4840-96ac-1fceb342124f`, display name `Verifiable Credentials Service Request`) exposed these role IDs when queried directly in the live tenant:
+
+- `0165bd66-5f36-41ef-abde-4e8fc0c91294` → `VerifiableCredential.Create.IssueRequest`
+- `410607a4-22de-48a8-b35d-ad33c0c2e1bf` → `VerifiableCredential.Create.PresentRequest`
+- `949ebb93-18f8-41b4-b677-c2bfea940027` → `VerifiableCredential.Create.All`
+
+These values are recorded here for debugging/reference only; the script should continue resolving IDs dynamically by role name rather than treating these GUIDs as durable constants.
