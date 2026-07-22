@@ -151,7 +151,7 @@ After infra deployment completes, open Azure Cloud Shell or a local PowerShell 7
   -DemoMode
 ```
 
-`07-bootstrap-github-actions-uami.ps1` discovers the deployed Container App and ACR, grants the Container App's system-assigned identity `AcrPull` on the registry, and prints the exact `gh variable set` commands for GitHub Environment variables.
+`07-bootstrap-github-actions-uami.ps1` discovers the deployed Container App and ACR, grants the deploy UAMI both `Contributor` and `Role Based Access Control Administrator` on the resource group, grants the Container App's system-assigned identity `AcrPull` on the registry, and prints the exact `gh variable set` commands for GitHub Environment variables.
 
 `bootstrap.ps1` now handles tenant/app/service setup plus infra configuration and `.env` generation, but it does **not** ZIP-deploy or otherwise publish the application image. The first runnable image still arrives through `.github/workflows/deploy.yml` (push to `main` / workflow dispatch) or a manual `az acr build` + `az containerapp update`.
 
@@ -248,7 +248,7 @@ That path provisions the same infrastructure and a bootstrap placeholder revisio
 | Script | Purpose |
 |--------|---------|
 | `scripts/bootstrap.ps1` | Full tenant bootstrap: registers Entra app, configures Verified ID service, creates Key Vault secrets, outputs `.env` values |
-| `scripts/07-bootstrap-github-actions-uami.ps1` | One-time GitHub Actions bootstrap: creates RG/UAMI, adds OIDC federated credentials, grants the deployed Container App `AcrPull` on ACR, and prints environment-scoped `gh variable set` commands |
+| `scripts/07-bootstrap-github-actions-uami.ps1` | One-time GitHub Actions bootstrap: creates RG/UAMI, adds OIDC federated credentials, grants the deploy UAMI `Contributor` + `Role Based Access Control Administrator` on the resource group, grants the deployed Container App `AcrPull` on ACR, and prints environment-scoped `gh variable set` commands |
 | `scripts/configure-verifiedid.ps1` | Configures Verified ID authority and credential manifest |
 | `scripts/register-app.ps1` | Registers the portal app in Entra ID with required API permissions |
 | `scripts/setup-storage.ps1` | Provisions Cosmos DB / Azure Storage for session state |
@@ -605,7 +605,7 @@ The script is idempotent and will:
 - create the deployment UAMI if missing
 - add GitHub OIDC federated credentials for the `staging` and `production` environments used by `deploy.yml`
 - add a `refs/heads/main` branch federated credential for future non-environment jobs
-- assign **Contributor** on the **resource group only**
+- assign **Contributor** and **Role Based Access Control Administrator** on the **resource group only**
 - discover the deployed Container App and Azure Container Registry in that resource group
 - grant the Container App's system-assigned identity **AcrPull** on the ACR
 - print the exact **environment-scoped** `gh variable set` commands required by `azure/login@v2` and the deploy workflow

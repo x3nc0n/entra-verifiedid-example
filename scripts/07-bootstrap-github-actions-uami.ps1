@@ -52,7 +52,7 @@
     script will auto-discover a single registry in the target resource group.
 
 .PARAMETER RoleDefinitionName
-    Azure RBAC role assigned to the UAMI at the resource-group scope.
+    Primary Azure RBAC role assigned to the UAMI at the resource-group scope.
 
 .EXAMPLE
     .\07-bootstrap-github-actions-uami.ps1 `
@@ -398,9 +398,20 @@ foreach ($branchRef in $GitHubBranchRefs) {
 Write-StepHeader "Ensuring resource-group-scoped RBAC"
 
 $scope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName"
+$rbacAdministratorRoleDefinitionId = "f58310d9-a9f6-439a-9e8d-f62e7b41a168"
 Ensure-RoleAssignment `
     -PrincipalId ([string]$identity.principalId) `
     -RoleName $RoleDefinitionName `
+    -Scope $scope `
+    -TargetDescription $scope
+
+# Bicep templates create Microsoft.Authorization/roleAssignments resources
+# (e.g. granting AcrPull, Key Vault Secrets User to app identities); the deploy
+# identity needs roleAssignments/write to create those, which Contributor alone
+# does not grant.
+Ensure-RoleAssignment `
+    -PrincipalId ([string]$identity.principalId) `
+    -RoleName $rbacAdministratorRoleDefinitionId `
     -Scope $scope `
     -TargetDescription $scope
 
@@ -461,7 +472,7 @@ Format-Summary -Title "GitHub Actions Azure OIDC Identity" -Values @{
     PrincipalId     = $principalId
     TenantId        = $TenantId
     SubscriptionId  = $SubscriptionId
-    RoleAssignment  = "$RoleDefinitionName @ $scope"
+    RoleAssignments = "$RoleDefinitionName @ $scope; Role Based Access Control Administrator ($rbacAdministratorRoleDefinitionId) @ $scope"
     ContainerApp    = $(if ($containerAppResourceName) { $containerAppResourceName } else { "not found" })
     Registry        = $(if ($registryName) { $registryName } else { "not found" })
     AcrPull         = $(if ($acrPullScope -and $containerAppPrincipalId) { "AcrPull @ $acrPullScope" } else { "not assigned" })
