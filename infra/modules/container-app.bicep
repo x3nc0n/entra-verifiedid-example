@@ -131,7 +131,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'portal'
-          image: 'node:20-alpine'
+          image: 'mcr.microsoft.com/mirror/docker/library/node:20-alpine'
           command: [
             'node'
           ]
