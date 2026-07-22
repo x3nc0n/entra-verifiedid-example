@@ -88,6 +88,15 @@ jobs:
             --image "${{ steps.image.outputs.repository }}:latest" \
             .
 
+      - name: Configure Container App registry identity
+        run: |
+          az containerapp registry set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --server "${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}" \
+            --identity system \
+            --only-show-errors
+
       - name: Deploy image to Container App
         run: |
           az containerapp update \
@@ -184,6 +193,15 @@ jobs:
             --image "${{ steps.image.outputs.repository }}:${GITHUB_SHA}" \
             --image "${{ steps.image.outputs.repository }}:latest" \
             .
+
+      - name: Configure Container App registry identity
+        run: |
+          az containerapp registry set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --server "${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}" \
+            --identity system \
+            --only-show-errors
 
       - name: Deploy image to Container App
         run: |

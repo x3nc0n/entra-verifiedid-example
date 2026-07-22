@@ -278,7 +278,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]",
-        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
         "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
       ],
@@ -291,13 +290,7 @@
             "targetPort": 3000,
             "transport": "auto",
             "allowInsecure": false
-          },
-          "registries": [
-            {
-              "server": "[variables('acrLoginServer')]",
-              "identity": "system"
-            }
-          ]
+          }
         },
         "template": {
           "containers": [
@@ -407,6 +400,21 @@
         "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'Full').identity.principalId]",
         "principalType": "ServicePrincipal",
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'Full').identity.principalId, 'AcrPull')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+        "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]"
+      ],
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]"
       }
     }
   ],

@@ -200,25 +200,8 @@ jobs:
           app = apps[0]
           config = app.get('properties', {}).get('configuration', {})
           registries = config.get('registries', [])
-          if not registries:
-              print('ERROR: Container App is missing registry configuration')
-              sys.exit(1)
-          registry = registries[0]
-          try:
-              registry_identity = resolve_value(registry.get('identity', ''))
-          except ValueError as exc:
-              print('ERROR: Failed to resolve Container App registry identity:', exc)
-              sys.exit(1)
-          if registry_identity != 'system':
-              print('ERROR: Container App registry auth must use the system-assigned identity')
-              sys.exit(1)
-          try:
-              server = resolve_value(registry.get('server', ''), allow_symbolic=True)
-          except ValueError as exc:
-              print('ERROR: Failed to resolve Container App registry server:', exc)
-              sys.exit(1)
-          if '.azurecr.io' not in server:
-              print('ERROR: Container App registry server is not an Azure Container Registry:', server)
+          if registries:
+              print('ERROR: Bootstrap Container App must not configure registry auth during initial provisioning')
               sys.exit(1)
           args = app.get('properties', {}).get('template', {}).get('containers', [{}])[0].get('args', [])
           try:
@@ -229,7 +212,7 @@ jobs:
           if 'npm start' in resolved_args:
               print('ERROR: Placeholder runtime still uses npm start on a base image')
               sys.exit(1)
-          print('Container App registry wiring and bootstrap placeholder are coherent')
+          print('Container App bootstrap placeholder is coherent and defers registry wiring')
           "
 
   security-scan:

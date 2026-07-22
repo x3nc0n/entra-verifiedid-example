@@ -45,9 +45,6 @@ param logAnalyticsWorkspaceId string
 @description('Key Vault URI.')
 param keyVaultUrl string
 
-@description('Azure Container Registry login server used by the deployed app.')
-param containerRegistryLoginServer string
-
 @description('Resource ID of the app runtime user-assigned managed identity.')
 param appRuntimeManagedIdentityResourceId string
 
@@ -109,12 +106,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      registries: [
-        {
-          server: containerRegistryLoginServer
-          identity: 'system'
-        }
-      ]
     }
     template: {
       containers: [

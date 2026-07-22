@@ -74,15 +74,6 @@ module keyVault 'modules/keyvault.bicep' = {
   }
 }
 
-module containerRegistry 'modules/container-registry.bicep' = {
-  name: 'containerRegistry'
-  params: {
-    location: location
-    appName: appName
-    sku: containerRegistrySku
-  }
-}
-
 module appRuntimeIdentity 'modules/user-assigned-identity.bicep' = {
   name: 'appRuntimeIdentity'
   params: {
@@ -109,7 +100,6 @@ module containerApp 'modules/container-app.bicep' = {
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     keyVaultUrl: keyVault.outputs.vaultUri
-    containerRegistryLoginServer: containerRegistry.outputs.loginServer
     appRuntimeManagedIdentityResourceId: appRuntimeIdentity.outputs.resourceId
     appRuntimeManagedIdentityClientId: appRuntimeIdentity.outputs.clientId
   }
@@ -120,6 +110,16 @@ module keyVaultAccess 'modules/keyvault.bicep' = {
   params: {
     location: location
     appName: appName
+    appPrincipalId: containerApp.outputs.principalId
+  }
+}
+
+module containerRegistry 'modules/container-registry.bicep' = {
+  name: 'containerRegistry'
+  params: {
+    location: location
+    appName: appName
+    sku: containerRegistrySku
     appPrincipalId: containerApp.outputs.principalId
   }
 }

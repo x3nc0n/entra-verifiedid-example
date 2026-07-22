@@ -14,6 +14,9 @@ param appName string
 ])
 param sku string = 'Basic'
 
+@description('Principal ID of the application managed identity.')
+param appPrincipalId string = ''
+
 // ── Variables ──────────────────────────────────────────────────────────────────
 
 var registryName = take(toLower('${replace(appName, '-', '')}${uniqueString(resourceGroup().id, appName, 'acr')}'), 50)
@@ -33,6 +36,16 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' =
   properties: {
     adminUserEnabled: false
     publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appPrincipalId)) {
+  name: guid(containerRegistry.id, appPrincipalId, 'AcrPull')
+  scope: containerRegistry
+  properties: {
+    principalId: appPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
   }
 }
 
