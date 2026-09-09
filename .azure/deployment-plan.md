@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Security hardening implemented and locally validated; cloud validation, deployment, tenant changes, and the conditional Power Pages bootstrap remain gated on the prerequisites below
+> **Status:** Validated — application infrastructure deployment remains gated on the prerequisites below
 
 Generated: 2026-09-09
 
@@ -27,7 +27,7 @@ Generated: 2026-09-09
 | Azure location | West US 2 (`westus2`) |
 | Inherited policy | West Europe is blocked |
 
-The local Azure CLI context matches the requested tenant, subscription, and operator. This was verified read-only; no cloud changes were made.
+The local Azure CLI context matches the requested tenant, subscription, and operator. After explicit approval, the resource group and dedicated empty pilot security group recorded below were created. No application infrastructure, tenant policy, group membership, Power Platform resource, or Power Pages resource was created.
 
 ---
 
@@ -53,6 +53,7 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 - A single region is acceptable.
 - The deployment will use the existing GitHub Actions environments and repository-bound OIDC model.
 - Resource group: `rg-entra-verifiedid-example`.
+- Pilot security group: `sg-entra-verifiedid-pilot` (`6619d891-1a00-4a4b-aace-b6850a10985f`).
 - Application prefix: `entra-vid`.
 - Initial GitHub environment: `staging`.
 
@@ -305,7 +306,7 @@ West US 2 service support and the applicable regional quotas were checked read-o
 | Log Analytics workspace | 1 | 1 planned | No workspace-count limit for the selected tier | Limited by generic subscription/resource-group limits |
 | Application Insights component | 1 | 1 planned | No count blocker identified | Workspace-based component; configure cost controls before production |
 | User-assigned managed identity | 1 runtime identity | 1 planned | 80 create operations per 20 seconds per subscription/region | One creation is within the documented rate limit |
-| Deployment user-assigned identity | 1 | 1 planned | Same managed identity rate limit | Resource group and deployment identity do not currently exist |
+| Deployment user-assigned identity | 1 | 1 planned | Same managed identity rate limit | Resource group exists in West US 2; deployment identity does not yet exist |
 | Role assignments | At least 2 in Bicep, plus deployment/bootstrap assignments | Planned set only | Subscription/RG authorization limits not approached | Operator permission still must allow role-assignment writes |
 | Power Platform environment and Power Pages site | 1 environment and 1 site | Unknown until bootstrap | Separate licensing, Dataverse, and Power Pages capacity | Not an Azure regional quota; requires explicit geography, capacity, license, and site-address approval |
 
@@ -317,7 +318,7 @@ West US 2 service support and the applicable regional quotas were checked read-o
 
 1. **Pilot tenant user:** provide the pre-created non-production user's tenant ID, immutable directory object ID, display UPN, and known personal email delivery address.
 2. **Manager approvers:** provide a dedicated manager-approver group or explicit approver object IDs. Only authenticated members of this scope may approve and issue invitations.
-3. **Pilot policy group:** provide or approve creation of a dedicated group containing only pilot users. TAP and FIDO2 policies must target this group, not all users.
+3. **Pilot policy group:** `sg-entra-verifiedid-pilot` exists with object ID `6619d891-1a00-4a4b-aace-b6850a10985f` and currently has no members. Add only the approved pilot user before targeting TAP and FIDO2 policies; tenant-wide targeting is not approved.
 4. **Invitation policy:** approve the short token lifetime, maximum outstanding invitations per user, resend/reissue behavior, approval expiry, and failure-lockout thresholds.
 5. **Invitation delivery:** select an approved outbound email service and sender identity for delivery to personal email. The current repository has no real email-delivery implementation.
 6. **Administrative operators:** confirm access to configure group-scoped authentication policies and grant the runtime application's TAP/passkey permissions.
@@ -369,10 +370,20 @@ West US 2 service support and the applicable regional quotas were checked read-o
 - [ ] Add the protected Power Pages preflight and deployment workflows
 - [ ] Run the authorized `forgetfulpotato` availability check without provisioning
 - [ ] Receive explicit approval before creating the Power Pages site
-- [ ] Run `azure-validate`
-- [ ] Run infrastructure what-if
+- [x] Create the approved resource group in West US 2
+- [x] Create the approved dedicated empty pilot security group
+- [x] Run `azure-validate`
+  - [x] Confirm Azure CLI authentication, subscription, tenant, and operator
+  - [x] Compile and lint the Bicep source
+  - [x] Run the Node.js test, parse, package, and dependency checks
+  - [x] Run resource-group template validation
+  - [x] Run the non-mutating resource-group what-if
+  - [x] Review applicable Azure Policy assignments
+  - [x] Perform static least-privilege RBAC review
+  - [x] Validate the Docker build context statically; local Docker daemon availability is a known non-blocking workstation limitation
+- [x] Run infrastructure what-if
 - [ ] Provision approved infrastructure
-- [ ] Perform separately approved tenant and directory changes
+- [ ] Add an approved pilot user and perform separately approved tenant policy and directory changes
 - [ ] Configure repository environments and OIDC
 - [ ] Publish the real application image
 - [ ] Configure final callback, origin, and relying-party values
@@ -382,18 +393,44 @@ West US 2 service support and the applicable regional quotas were checked read-o
 
 ## 10. Validation Proof
 
-Local, non-mutating validation completed on 2026-09-09:
+Local and Azure control-plane preflight validation completed on 2026-09-09:
 
 | Validation | Result |
 |------------|--------|
-| `npm test` | 20/20 tests passed, including fragment activation, token-free route contracts, concurrent one-time redemption, pre-TAP pilot revalidation, durable sessions, fail-closed startup, and infrastructure contracts |
-| `node --check` | All changed application, route, service, browser, and test JavaScript parsed successfully |
-| `az bicep build --file infra/main.bicep` | Compiled successfully; only the two pre-existing unused-parameter warnings remain |
+| Approved resource group | `rg-entra-verifiedid-example` created successfully in `westus2`; resource ID `/subscriptions/7e1b60b8-d616-4396-9de2-fc917930d02e/resourceGroups/rg-entra-verifiedid-example`; the group contains no Azure resources |
+| Approved pilot group | `sg-entra-verifiedid-pilot` created successfully as a mail-disabled, security-enabled Entra group; object ID `6619d891-1a00-4a4b-aace-b6850a10985f`; membership is empty |
+| Authentication | Azure CLI resolved subscription `7e1b60b8-d616-4396-9de2-fc917930d02e`, tenant `3b14ce70-8bea-4d11-9e2c-6b4a04c8010d`, and operator `JohnSpaid@nerdypotato.onmicrosoft.com` |
+| `npm test` | 21/21 tests passed, including fragment activation, token-free route contracts, concurrent one-time redemption, pre-TAP pilot revalidation, durable sessions, fail-closed startup, Graph role contracts, and infrastructure contracts |
+| `node --check` | All 19 application and test JavaScript files parsed successfully |
+| Package validation | `npm pack --dry-run --json` succeeded with 238 package entries; `npm audit --audit-level=high` reported 0 vulnerabilities |
+| `az bicep build --file infra/main.bicep --stdout` | Compiled successfully; only the two pre-existing unused compatibility-parameter warnings remain |
+| `az bicep lint --file infra/main.bicep` | Succeeded with the same two non-blocking unused compatibility-parameter warnings |
 | ARM and script parsing | `azuredeploy.json` parsed as JSON; changed PowerShell scripts parsed successfully |
-| RBAC inspection | Compiled Bicep and ARM each contain two `Storage Table Data Contributor` assignments scoped separately to the invitation and session tables |
+| Template validation | `az deployment group validate` returned `provisioningState: Succeeded` and `error: null` |
+| What-if | Returned `status: Succeeded` and `error: null`; 13 resources are proposed for creation, with no modifications or deletions. Four role assignments are reported as `Unsupported` because their principal IDs are deployment-time outputs; their definitions were verified statically. The existing duplicate-Key-Vault-module diagnostic remains a warning, not an apply or policy failure |
+| Azure Policy | `az policy assignment list` returned no applicable assignments visible at subscription scope; the West US 2 template validation and what-if both succeeded |
+| RBAC inspection | Runtime UAMI receives `Storage Table Data Contributor` separately at the invitation and session table scopes. The Container App system identity receives `AcrPull` at the registry scope and `Key Vault Secrets User` at the vault scope. No subscription- or resource-group-wide application data role is declared |
 | Local smoke test | Demo-mode `/health` returned 200 and `/onboarding/demo` returned a fragment-bearing, token-free-request invitation redirect |
+| Docker build context | `Dockerfile` uses `npm ci` and the required root `package-lock.json` exists. Docker client 29.6.2 is installed, but the local Docker Desktop Linux daemon is not running, so `docker buildx build --check .` could not execute. No ACR exists yet, so a cloud build check would require an unapproved resource or image push; this is recorded as a workstation limitation, not a deployment-plan blocker |
 
-No Azure deployment, tenant mutation, secret creation, `azure-validate`, or infrastructure what-if was performed. Those cloud-side checks remain required before deployment.
+Exact approved mutation commands:
+
+```powershell
+az group create --name 'rg-entra-verifiedid-example' --location 'westus2' --subscription '7e1b60b8-d616-4396-9de2-fc917930d02e'
+az ad group create --display-name 'sg-entra-verifiedid-pilot' --mail-nickname 'entra-verifiedid-pilot' --description 'Dedicated pilot group for the Entra Verified ID example.'
+```
+
+Exact Azure validation commands:
+
+```powershell
+az bicep build --file '.\infra\main.bicep' --stdout
+az bicep lint --file '.\infra\main.bicep'
+az deployment group validate --resource-group 'rg-entra-verifiedid-example' --template-file '.\infra\main.bicep' --parameters location='westus2' containerAppLocation='westus2' appName='entra-vid' azureTenantId='3b14ce70-8bea-4d11-9e2c-6b4a04c8010d' pilotGroupId='6619d891-1a00-4a4b-aace-b6850a10985f' demoMode=false
+az deployment group what-if --resource-group 'rg-entra-verifiedid-example' --template-file '.\infra\main.bicep' --parameters location='westus2' containerAppLocation='westus2' appName='entra-vid' azureTenantId='3b14ce70-8bea-4d11-9e2c-6b4a04c8010d' pilotGroupId='6619d891-1a00-4a4b-aace-b6850a10985f' demoMode=false --result-format ResourceIdOnly --no-pretty-print
+az policy assignment list --scope '/subscriptions/7e1b60b8-d616-4396-9de2-fc917930d02e' --disable-scope-strict-match
+```
+
+No placeholder GUIDs or fabricated secrets were used. The validation used the approved tenant ID and the newly created pilot group object ID. No application infrastructure was deployed, no secrets were created, no group members were added, and no Power Platform or Power Pages action was performed.
 
 ---
 
@@ -401,7 +438,7 @@ No Azure deployment, tenant mutation, secret creation, `azure-validate`, or infr
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `.azure/deployment-plan.md` | Deployment source of truth | Approved; implementation gates documented |
+| `.azure/deployment-plan.md` | Deployment source of truth | Validated; deployment gates documented |
 | `infra/main.bicep` | Existing infrastructure source | Durable state, pilot-group input, and runtime-RBAC wiring implemented |
 | `infra/modules/storage.bicep` | Existing storage module | Invitation/session tables and managed-identity data role implemented |
 | `azuredeploy.json` | Existing evaluation-only fallback | Aligned with non-demo defaults and durable table state |
@@ -433,4 +470,4 @@ No Azure deployment, tenant mutation, secret creation, `azure-validate`, or infr
 
 ## 13. Next Step
 
-Provide the pilot user, manager approver scope, exact pilot policy group object ID, invitation policy, and approved email-delivery choice. Confirm the runtime Graph app roles and group-scoped TAP/FIDO2 policy, then run `azure-validate` and infrastructure what-if before any deployment. The future Verified ID mode remains blocked until callback state is durable.
+Before deployment, provide the pilot user and add that user to `sg-entra-verifiedid-pilot`; provide the manager approver scope; approve the invitation policy and email-delivery implementation; confirm the runtime Graph app roles and group-scoped TAP/FIDO2 policy; configure repository environments and OIDC; and separately approve any application infrastructure deployment. Power Platform, Power Pages, application image publication, and the future Verified ID extension remain outside this validation run.
