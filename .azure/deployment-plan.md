@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Planning - blocked on required deployment inputs and approval
+> **Status:** Approved for implementation and validation; cloud deployment is gated on the live-flow corrections below
 
 Generated: 2026-09-09
 
@@ -24,7 +24,7 @@ Generated: 2026-09-09
 | Subscription | `Spaid Family Core Infra LZ` |
 | Subscription ID | `7e1b60b8-d616-4396-9de2-fc917930d02e` |
 | Subscription state | Enabled |
-| Azure location | **Required before approval** |
+| Azure location | West US 2 (`westus2`) |
 | Inherited policy | West Europe is blocked |
 
 The local Azure CLI context matches the requested tenant, subscription, and operator. This was verified read-only; no cloud changes were made.
@@ -35,27 +35,31 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 
 | Attribute | Value |
 |-----------|-------|
-| Classification | Repository-defined demo / proof of concept |
+| Classification | End-to-end proof of concept with live identity proofing |
 | Runtime scale | Small baseline: 0.5 vCPU, 1 GiB, zero to two replicas |
 | Budget posture | Cost-optimized baseline |
 | Subscription | Confirmed above |
-| Location | Not supplied; must be explicitly selected |
+| Location | West US 2 |
 | Data residency or compliance | Not supplied |
-| Live identity verification | Not confirmed; repository supports simulated and live modes |
-| Public trusted domain | Not supplied; required for live decentralized-identity domain binding |
+| Live identity verification | Required |
+| Managed low-code portal | Out of scope for this deployment |
+| Public trusted domain | Not required if the proofing partner issues the presented credential; required only if this tenant also becomes an issuer |
 
-### Assumptions that require confirmation
+### Approved proof-of-concept defaults
 
 - The initial target remains a demo or proof of concept. The current application stores sessions and issuance/presentation callback state in process memory, so it is not production-safe across restarts or multiple replicas.
 - Existing low-cost defaults are acceptable: Basic container registry, consumption-style container hosting, locally redundant storage, and scale-to-zero.
 - A single region is acceptable.
 - The deployment will use the existing GitHub Actions environments and repository-bound OIDC model.
+- Resource group: `rg-entra-verifiedid-example`.
+- Application prefix: `entra-vid`.
+- Initial GitHub environment: `staging`.
 
 ### Policy constraints
 
 - An inherited policy blocks West Europe.
 - Other subscription policies were not identified in the read-only subscription query.
-- The selected region still requires service availability, quota, and capacity validation before approval.
+- West US 2 supports Container Apps and the required resource providers are registered.
 
 ---
 
@@ -167,13 +171,37 @@ For advanced credential-service setup, the signing-key vault has a different per
 - The FIDO2/TAP script refuses implicit tenant-wide rollout unless an explicit override is passed. Dedicated onboarding groups are the safer default.
 - The credential setup script requires a real trusted domain. A generated container hostname or managed portal hostname must not be assumed suitable until it can serve the exact well-known file over HTTPS without redirects.
 
+### Required live onboarding sequence
+
+The approved end-to-end proof-of-concept sequence is:
+
+1. A pre-created tenant user receives a short-lived, user-specific onboarding link.
+2. The identity-proofing partner verifies the person and issues a partner-backed Verified ID.
+3. The portal requests presentation of that Verified ID.
+4. The portal validates the presentation, matches its claims to the pre-created tenant user, and records the audit result.
+5. The portal creates a Temporary Access Pass for that tenant user through the directory API.
+6. The TAP is shown once through a protected handoff.
+7. The user signs in with the TAP and registers a tenant passkey.
+8. The portal confirms the tenant authentication method exists and marks onboarding complete.
+
+This differs from the current application. The following corrections are mandatory before live deployment:
+
+- Replace the placeholder identity-proofing `/requests` contract with the actual approved provider contract.
+- Consume and verify a partner-issued credential instead of issuing a new employee credential before proofing.
+- Add tenant-user matching and TAP creation.
+- Retrieve passkey `creationOptions` from the directory API; do not generate an application-domain WebAuthn challenge and submit it as a tenant passkey.
+- Complete passkey registration with the directory API and verify the created authentication method.
+- Validate all credential-service callback authentication rather than accepting the current hard-coded callback header without server-side enforcement.
+- Use least-privilege TAP and passkey application permissions for the runtime identity.
+- Add a protected, one-time TAP display and avoid logging or persisting the TAP value.
+
 ---
 
-## 6. Optional Managed Portal Assessment
+## 6. Deferred Managed Portal Assessment
 
 The current repository does **not** require a Power Apps, Power Pages, Dataverse, or other low-code environment. No repository dependency, deployment parameter, infrastructure resource, or script references one.
 
-The requested `forgetfulpotato` name is therefore not part of the current Azure deployment unless the user intentionally adds a separate managed onboarding portal.
+The requested `forgetfulpotato` name and the separate managed portal are explicitly deferred.
 
 ### If a separate managed portal is desired
 
@@ -227,39 +255,35 @@ Changing an existing environment URL is not an availability-testing mechanism: s
 
 ## 7. Provisioning Limit Checklist
 
-Quota validation is blocked until an Azure location is selected. The resource inventory is complete; usage and limits must be queried for the approved region before this plan can be approved.
+West US 2 service support and the applicable regional quotas were checked read-only.
 
-| Resource type | Number to deploy | Capacity status | Notes |
-|---------------|------------------|-----------------|-------|
-| Container Apps managed environment | 1 | Blocked on location | Check regional managed-environment quota and current capacity |
-| Container App | 1 | Blocked on location | Initial maximum replica count is 2 |
-| Container Registry | 1 | Blocked on location | Basic SKU |
-| Key Vault | 1 application vault | Blocked on location | A separate signing-key vault may be required |
-| Storage account | 1 | Blocked on location | Standard locally redundant |
-| Log Analytics workspace | 1 | Blocked on location | 30-day retention |
-| Application Insights component | 1 | Blocked on location | Workspace-based |
-| User-assigned managed identity | 1 runtime identity | Blocked on location | Bicep-managed |
-| Deployment user-assigned identity | 1 | Blocked on location and existence check | Created by bootstrap, not Bicep |
-| Role assignments | At least 2 in Bicep, plus deployment/bootstrap assignments | Permission check required | Deployment operator needs role-assignment write permission at the resource-group scope |
+| Resource type | Number to deploy | Total after deployment | Limit / quota | Result and source |
+|---------------|------------------|------------------------|---------------|-------------------|
+| Container Apps managed environment | 1 | 1 | 20 | Within quota; `az quota` reports current usage 0 in West US 2 |
+| Container App | 1 | 1 | Within the managed environment | The initial maximum replica count is 2; no subscription count blocker applies at this scale |
+| Container Registry | 1 | 1 | SKU limits apply | No existing registry was found in West US 2; Basic provides 10 GiB included storage and supports the planned single repository |
+| Key Vault | 1 application vault | 1 | No vault-count quota documented | Service transaction limits are not material at proof-of-concept scale |
+| Storage account | 1 | 3 | 250 per region by default | Two existing standard-endpoint accounts plus one planned account are within the West US 2 limit |
+| Log Analytics workspace | 1 | 1 planned | No workspace-count limit for the selected tier | Limited by generic subscription/resource-group limits |
+| Application Insights component | 1 | 1 planned | No count blocker identified | Workspace-based component; configure cost controls before production |
+| User-assigned managed identity | 1 runtime identity | 1 planned | 80 create operations per 20 seconds per subscription/region | One creation is within the documented rate limit |
+| Deployment user-assigned identity | 1 | 1 planned | Same managed identity rate limit | Resource group and deployment identity do not currently exist |
+| Role assignments | At least 2 in Bicep, plus deployment/bootstrap assignments | Planned set only | Subscription/RG authorization limits not approached | Operator permission still must allow role-assignment writes |
 
-**Quota status:** Not approval-ready. After location selection, use `az quota` for supported providers, then approved read-only fallbacks for unsupported providers. Capacity must also be checked for Container Apps because quota alone does not guarantee regional provisioning capacity.
+**Quota status:** Within documented limits. A successful what-if does not guarantee transient Container Apps capacity, so actual provisioning still needs normal capacity-error recovery.
 
 ---
 
-## 8. Required Inputs Before Plan Approval
+## 8. Required Inputs Before Live End-to-End Testing
 
-1. **Azure location:** choose a permitted region. West Europe is blocked. The repository default of Central US is only a default and is not treated as approval.
-2. **Deployment classification:** confirm demo/POC or request production hardening.
-3. **Expected users and load:** confirm that the existing small scale is sufficient.
-4. **Budget and compliance:** provide spending, residency, retention, network, and tagging requirements.
-5. **Resource naming:** confirm resource group, application prefix, and GitHub environment (`staging` or `production`).
-6. **Trusted domain:** provide a controlled public domain and the hosting method for the nonredirecting well-known DID configuration file.
-7. **Credential-service setup path:** confirm whether tenant setup already exists and whether advanced setup requires a separate signing-key vault.
-8. **Identity-proofing mode:** choose simulated mode or provide the approved live endpoint, subscription key, webhook secret handling, and default manager routing.
-9. **FIDO2/TAP scope:** provide dedicated group object IDs, or explicitly approve tenant-wide enablement.
-10. **Administrative operators:** identify who holds the required directory roles and Azure role-assignment permissions.
-11. **Managed portal decision:** confirm whether a separate low-code onboarding site is in scope. If yes, clarify whether `forgetfulpotato` is the environment URL or website address and provide environment type, region, licensing/capacity, and security-group requirements.
-12. **Public application URL:** decide whether to use the generated container hostname initially or a custom domain.
+1. **Identity-proofing provider contract:** provide the real endpoint, authentication method, request/response schema, callback-signing rules, and test credentials through an approved secret channel.
+2. **Test tenant user:** provide an existing non-production user UPN whose HR/proofing claims can be matched. The account must be pre-created before the flow starts.
+3. **TAP/FIDO2 pilot scope:** provide or approve creation of a dedicated pilot group containing only the test user.
+4. **Administrative operators:** confirm access to an Authentication Policy Administrator for policy changes and an Authentication Administrator or equivalent application-permission grant path for TAP/passkey operations.
+5. **TAP policy:** use one-time, 60-minute TAP for the first test unless the test includes device enrollment likely to exceed the ten-minute post-sign-in authentication-method registration window.
+6. **Claim matching:** define the minimum exact-match claims used to bind the presented credential to the tenant user.
+7. **Public URL:** use the generated Container App hostname for the proof-of-concept unless the identity-proofing provider requires a pre-registered custom callback domain.
+8. **Credential issuer decision:** confirm that the proofing partner issues the credential. If this tenant must issue its own credential, a trusted domain and signing-key setup become required.
 
 ---
 
@@ -275,14 +299,17 @@ Quota validation is blocked until an Azure location is selected. The resource in
 - [x] Select the existing Bicep and container delivery recipe
 - [x] Inventory resources
 - [x] Assess optional managed portal applicability
-- [ ] Receive the required inputs in Section 8
-- [ ] Validate regional quotas and capacity
-- [ ] Complete architecture decisions
-- [ ] Receive user approval
+- [x] Receive region, proof-of-concept, live-flow, and portal-scope decisions
+- [x] Validate regional quotas and documented limits
+- [x] Complete deployment architecture decisions
+- [x] Receive approval to proceed with implementation and validation
 
-### Phase 2: Execution - prohibited until approval
+### Phase 2: Implementation and validation
 
-- [ ] Research and confirm service-specific requirements for the selected region
+- [x] Research and confirm service-specific requirements for the selected region
+- [ ] Correct the live identity-proofing, TAP, and tenant-passkey flow
+- [ ] Add focused tests for the corrected flow
+- [ ] Obtain the live provider contract and test credentials
 - [ ] Run `azure-validate`
 - [ ] Run infrastructure what-if
 - [ ] Provision approved infrastructure
@@ -304,7 +331,7 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `.azure/deployment-plan.md` | Phase 1 source of truth | Complete as facts allow; awaiting inputs |
+| `.azure/deployment-plan.md` | Deployment source of truth | Approved; implementation gates documented |
 | `infra/main.bicep` | Existing infrastructure source | No change planned |
 | `azuredeploy.json` | Existing evaluation-only fallback | No change planned |
 | `.github/workflows/deploy-infrastructure.yml` | Existing what-if/apply workflow | No change planned |
@@ -328,4 +355,4 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 
 ## 13. Next Step
 
-Provide the inputs in Section 8. The plan must then be updated with a selected region, completed quota/capacity results, and final scope before it can be presented for approval.
+Correct and validate the live onboarding flow, obtain the provider contract and test user, then invoke `azure-validate` before any deployment.
