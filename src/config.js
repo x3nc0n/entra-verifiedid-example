@@ -2,6 +2,18 @@
 
 require('dotenv').config();
 
+function parseCsv(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
+
 const config = {
   // ── Application ─────────────────────────────────────────────────────────────
   port: parseInt(process.env.PORT, 10) || 3000,
@@ -9,6 +21,17 @@ const config = {
   sessionSecret: process.env.SESSION_SECRET || 'insecure-dev-secret-change-me',
   appBaseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
   demoMode: process.env.DEMO_MODE === 'true',
+
+  // ── First-release assurance ──────────────────────────────────────────────────
+  assurance: {
+    mode: process.env.ASSURANCE_MODE || 'invitation',
+    approvalApiKey: process.env.ONBOARDING_APPROVAL_API_KEY || '',
+    invitationLifetimeMinutes: parseInteger(
+      process.env.INVITATION_LIFETIME_MINUTES,
+      60
+    ),
+    invitationMaxAttempts: parseInteger(process.env.INVITATION_MAX_ATTEMPTS, 5),
+  },
 
   // ── Azure AD / Entra ID ──────────────────────────────────────────────────────
   azure: {
@@ -30,28 +53,24 @@ const config = {
       '3db474b9-6a0c-4840-96ac-1fceb342124f/.default',
     // Request Service base URL
     requestServiceUrl: 'https://verifiedid.did.msidentity.com/v1.0',
-    // Your credential contract manifest URL
-    credentialManifestUrl: process.env.VC_CREDENTIAL_MANIFEST_URL || '',
-    // Credential type name as defined in your contract
-    credentialType: process.env.VC_CREDENTIAL_TYPE || 'VerifiedEmployee',
-    // Your tenant's DID (issuer authority)
-    issuerAuthority: process.env.VC_ISSUER_AUTHORITY || '',
-  },
-
-  // ── IdentityPass ─────────────────────────────────────────────────────────────
-  identityPass: {
-    apiEndpoint: process.env.IDENTITYPASS_API_ENDPOINT ||
-      'https://identitypass.microsoft.com/api/v1',
-    subscriptionKey: process.env.IDENTITYPASS_SUBSCRIPTION_KEY || '',
-    defaultManagerEmail: process.env.IDENTITYPASS_MANAGER_EMAIL || '',
-    webhookSecret: process.env.IDENTITYPASS_WEBHOOK_SECRET || '',
+    // DID of this relying-party tenant, used as the presentation authority.
+    verifierAuthority: process.env.VC_VERIFIER_AUTHORITY || '',
+    // Partner-issued credential contract values. These must come from the
+    // approved identity-proofing provider contract.
+    credentialType: process.env.VC_CREDENTIAL_TYPE || '',
+    acceptedIssuers: parseCsv(process.env.VC_ACCEPTED_ISSUERS),
+    userPrincipalNameClaim: process.env.VC_USER_PRINCIPAL_NAME_CLAIM || '',
+    employeeIdClaim: process.env.VC_EMPLOYEE_ID_CLAIM || '',
+    callbackApiKey: process.env.VC_CALLBACK_API_KEY || '',
   },
 
   // ── Microsoft Graph API ──────────────────────────────────────────────────────
   graph: {
     baseUrl: 'https://graph.microsoft.com',
     scope: 'https://graph.microsoft.com/.default',
-    betaUrl: 'https://graph.microsoft.com/beta',
+    tapLifetimeMinutes: parseInteger(process.env.TAP_LIFETIME_MINUTES, 60),
+    securityInfoUrl: process.env.ENTRA_SECURITY_INFO_URL ||
+      'https://mysignins.microsoft.com/security-info',
   },
 
   // ── FIDO2 / WebAuthn ─────────────────────────────────────────────────────────
@@ -68,5 +87,13 @@ const config = {
     url: process.env.KEY_VAULT_URL || '',
   },
 };
+
+if (!['invitation', 'verified-id'].includes(config.assurance.mode)) {
+  throw new Error('ASSURANCE_MODE must be invitation or verified-id.');
+}
+if (config.assurance.invitationMaxAttempts < 1 ||
+    config.assurance.invitationMaxAttempts > 20) {
+  throw new Error('INVITATION_MAX_ATTEMPTS must be between 1 and 20.');
+}
 
 module.exports = config;

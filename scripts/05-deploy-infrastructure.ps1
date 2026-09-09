@@ -10,7 +10,7 @@
       - Deploys infra/main.bicep (or the ARM fallback) via New-AzResourceGroupDeployment
       - Waits for deployment completion and surfaces any provisioning errors
       - Retrieves deployment outputs (Container App name/FQDN, Key Vault URI, ACR, App Insights key, runtime UAMI IDs)
-      - Stores the Entra ID / Verified ID / IdentityPass / FIDO2 configuration in Key Vault
+      - Stores non-secret Entra ID / optional Verified ID / FIDO2 configuration in Key Vault
       - Pushes runtime configuration into the Bicep deployment parameters
       - Leaves Microsoft Graph / Verified ID app-role grants for the post-deploy
         runtime-UAMI permission step (scripts/08-grant-app-uami-graph-permissions.ps1)
@@ -51,16 +51,16 @@
     Verified ID authority DID (output of 02-configure-verified-id.ps1).
 
 .PARAMETER CredentialManifestUrl
-    Credential manifest URL (output of script 02).
+    Legacy compatibility input. The portal no longer issues credentials.
 
 .PARAMETER CredentialType
     Credential type name (default: VerifiedEmployee).
 
 .PARAMETER IdentityPassEndpoint
-    IdentityPass API endpoint (output of script 03; use "demo://simulated" for demo).
+    Legacy compatibility input. The invitation flow does not call IdentityPass.
 
 .PARAMETER IdentityPassSubscriptionKey
-    IdentityPass subscription key as SecureString (leave as empty SecureString for demo).
+    Legacy compatibility input. It is not stored or passed to the application.
 
 .PARAMETER Fido2RpId
     FIDO2 relying party ID — typically the public application domain
@@ -279,10 +279,6 @@ if (-not $DemoMode -and $templateFile) {
 
     # Only include optional Bicep params when values are available
     if ($VerifiedIdAuthority)   { $deployParams['verifiedIdAuthority']   = $VerifiedIdAuthority }
-    if ($CredentialManifestUrl) { $deployParams['credentialManifestUrl'] = $CredentialManifestUrl }
-    if ($IdentityPassEndpoint -and $IdentityPassEndpoint -ne "demo://simulated") {
-        $deployParams['identityPassEndpoint'] = $IdentityPassEndpoint
-    }
     if ($PSCmdlet.ShouldProcess($ResourceGroupName, "Deploy '$DEPLOYMENT_NAME'")) {
         Write-Progress-Step "Submitting deployment (this may take 5–10 minutes)..."
 
@@ -373,18 +369,12 @@ if (-not $DemoMode -and $keyVaultUri) {
     $extraSecrets = [ordered]@{
         "azure-tenant-id"               = $TenantId
         "vc-issuer-authority"           = $VerifiedIdAuthority
-        "vc-credential-manifest-url"    = $CredentialManifestUrl
         "vc-credential-type"            = $CredentialType
-        "identitypass-api-endpoint"     = $IdentityPassEndpoint
         "fido2-rp-name"                 = $AppName
         "fido2-rp-id"                   = $fido2RpIdValue
         "fido2-origin"                  = $fido2OriginValue
         "app-base-url"                  = $webAppUrl
     }
-    if ($IdentityPassSubscriptionKey) {
-        $extraSecrets["identitypass-key"] = $IdentityPassSubscriptionKey
-    }
-
     foreach ($secretName in $extraSecrets.Keys) {
         if ($PSCmdlet.ShouldProcess("$vaultName/$secretName", "Set Key Vault secret")) {
             try {

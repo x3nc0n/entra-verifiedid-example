@@ -4,146 +4,80 @@
   <div class="container">
     <div class="page-header">
       <div class="step-indicator">
-        <span class="step done">1. Enter Details</span>
+        <span class="step done">1. Validate Invitation</span>
         <span class="step-sep">&rarr;</span>
-        <span class="step done">2. Approval</span>
+        <% if (assuranceMode === 'verified-id') { %>
+          <span class="step done">2. Present Partner ID</span>
+          <span class="step-sep">&rarr;</span>
+        <% } %>
+        <span class="step done"><%= assuranceMode === 'verified-id' ? '3' : '2' %>. Sign in with TAP</span>
         <span class="step-sep">&rarr;</span>
-        <span class="step done">3. Get Credential</span>
-        <span class="step-sep">&rarr;</span>
-        <span class="step done">4. Verify</span>
-        <span class="step-sep">&rarr;</span>
-        <span class="step active">5. Passkeys</span>
+        <span class="step active"><%= assuranceMode === 'verified-id' ? '4' : '3' %>. Register Passkey</span>
       </div>
-      <h1 class="page-title">Register Passkeys</h1>
-      <p class="page-subtitle">Register at least one passkey to complete phishing-resistant MFA setup. You can register both for redundancy.</p>
+      <h1 class="page-title">Register and Confirm Tenant Passkey</h1>
+      <p class="page-subtitle">
+        Microsoft Graph supplies the Entra-compatible creation options and accepts the
+        resulting public key credential. The portal never substitutes its own production challenge.
+      </p>
     </div>
 
     <div id="globalError" class="alert alert-error hidden" role="alert"></div>
-    <div id="globalSuccess" class="alert alert-success hidden" role="status"></div>
 
-    <div class="passkey-grid">
+    <div class="card">
+      <h2 class="card-section-title">Recommended browser flow</h2>
+      <ol class="instructions-list">
+        <li>Open Microsoft Security info and sign in with the one-time TAP.</li>
+        <li>Add a passkey or FIDO2 security key in the Microsoft-hosted registration experience.</li>
+        <li>Return here and select <strong>Check registration</strong>.</li>
+      </ol>
+      <p>
+        <a href="<%= securityInfoUrl %>" class="btn btn-primary" target="_blank" rel="noopener">
+          Open Microsoft Security info
+        </a>
+      </p>
+    </div>
 
-      <!-- Phone / Platform Passkey -->
-      <div class="card passkey-card" id="platformCard">
-        <div class="passkey-card-header">
-          <span class="passkey-icon" aria-hidden="true">📱</span>
-          <h2 class="passkey-card-title">Register Phone Passkey</h2>
-        </div>
-        <p class="passkey-card-desc">
-          Register a <strong>platform authenticator</strong> using your device's built-in
-          biometrics — Face ID, Touch ID, Windows Hello, or fingerprint sensor.
-        </p>
-        <ul class="passkey-feature-list">
-          <li>Bound to this device</li>
-          <li>Uses biometric unlock</li>
-          <li>Fastest sign-in experience</li>
-        </ul>
-        <div class="passkey-status" id="platformStatus">
-          <% if (passkeyPhone) { %>
-            <span class="status-registered">&#10003; Registered</span>
-          <% } else { %>
-            <span class="status-not-registered">&#9675; Not registered</span>
-          <% } %>
-        </div>
-        <button
-          class="btn btn-primary"
-          id="registerPlatformBtn"
-          onclick="registerPasskey('platform')"
-          <%- passkeyPhone ? 'disabled' : '' %>
-        >
-          <%- passkeyPhone ? 'Already Registered' : 'Register Phone Passkey' %>
+    <div class="card mt-md">
+      <h2 class="card-section-title">Graph provisioning API</h2>
+      <p>
+        This path calls <code>creationOptions</code>, invokes WebAuthn, submits the
+        credential to Graph, and confirms the created method. Browsers will block it
+        when Entra returns a relying-party ID that is not valid for this portal origin.
+      </p>
+      <div class="form-group">
+        <label for="displayName" class="form-label">Passkey display name</label>
+        <input id="displayName" class="form-input" value="Onboarding passkey" maxlength="64">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" id="registerPasskeyBtn" onclick="registerPasskey()"
+          <%- passkeyRegistered ? 'disabled' : '' %>>
+          Register using Graph options
+        </button>
+        <button class="btn btn-primary" id="confirmPasskeyBtn" onclick="confirmPasskey()"
+          <%- passkeyRegistered ? 'disabled' : '' %>>
+          Check registration
         </button>
       </div>
-
-      <!-- YubiKey / Cross-platform -->
-      <div class="card passkey-card" id="crossPlatformCard">
-        <div class="passkey-card-header">
-          <span class="passkey-icon" aria-hidden="true">🔑</span>
-          <h2 class="passkey-card-title">Register YubiKey</h2>
-        </div>
-        <p class="passkey-card-desc">
-          Register a <strong>hardware security key</strong> (YubiKey or compatible FIDO2
-          token) for the highest level of phishing resistance.
-        </p>
-        <ul class="passkey-feature-list">
-          <li>Physical hardware token</li>
-          <li>Works on any device</li>
-          <li>Gold standard for security</li>
-        </ul>
-        <div class="passkey-status" id="crossPlatformStatus">
-          <% if (passkeyYubikey) { %>
-            <span class="status-registered">&#10003; Registered</span>
-          <% } else { %>
-            <span class="status-not-registered">&#9675; Not registered</span>
-          <% } %>
-        </div>
-        <button
-          class="btn btn-primary"
-          id="registerCrossPlatformBtn"
-          onclick="registerPasskey('cross-platform')"
-          <%- passkeyYubikey ? 'disabled' : '' %>
-        >
-          <%- passkeyYubikey ? 'Already Registered' : 'Register YubiKey' %>
-        </button>
+      <div class="passkey-status mt-md" id="registrationStatus">
+        <% if (passkeyRegistered) { %>
+          <span class="status-registered">&#10003; Tenant passkey confirmed</span>
+        <% } else { %>
+          <span class="status-not-registered">&#9675; No confirmed tenant passkey</span>
+        <% } %>
       </div>
-
-    </div><!-- /.passkey-grid -->
+    </div>
 
     <div class="passkey-complete-section" id="completeSection">
-      <% if (passkeyPhone || passkeyYubikey) { %>
-        <a href="/passkey/complete" class="btn btn-success btn-large" id="completeBtn">
-          Complete Onboarding &rarr;
-        </a>
+      <% if (passkeyRegistered) { %>
+        <a href="/passkey/complete" class="btn btn-success btn-large">Complete Onboarding &rarr;</a>
       <% } else { %>
-        <button class="btn btn-success btn-large" id="completeBtn" disabled>
-          Complete Onboarding &mdash; register at least one key first
+        <button class="btn btn-success btn-large" disabled>
+          Complete Onboarding &mdash; confirm a tenant passkey first
         </button>
       <% } %>
     </div>
-
-    <div class="info-box mt-md">
-      <h3>🔒 About passkeys</h3>
-      <ul>
-        <li>Passkeys replace passwords with public-key cryptography — they can't be phished.</li>
-        <li>Your private key never leaves this device (platform) or your hardware key (YubiKey).</li>
-        <li>Registering both provides a backup if one is unavailable.</li>
-      </ul>
-    </div>
-
   </div>
 </main>
 
 <%- include('partials/footer') %>
-
 <script src="/js/main.js"></script>
-<script>
-// Initial state from server
-var _registered = {
-  platform: <%- passkeyPhone ? 'true' : 'false' %>,
-  'cross-platform': <%- passkeyYubikey ? 'true' : 'false' %>,
-};
-
-function _onPasskeySuccess(type) {
-  _registered[type] = true;
-
-  var statusId = type === 'platform' ? 'platformStatus' : 'crossPlatformStatus';
-  document.getElementById(statusId).innerHTML =
-    '<span class="status-registered">&#10003; Registered</span>';
-
-  var btnId = type === 'platform' ? 'registerPlatformBtn' : 'registerCrossPlatformBtn';
-  var btn = document.getElementById(btnId);
-  btn.disabled = true;
-  btn.textContent = 'Already Registered';
-
-  var msg = (type === 'platform' ? 'Phone passkey' : 'YubiKey') + ' registered successfully!';
-  var successEl = document.getElementById('globalSuccess');
-  successEl.textContent = msg;
-  successEl.classList.remove('hidden');
-  setTimeout(function () { successEl.classList.add('hidden'); }, 5000);
-
-  // Unlock complete button
-  var section = document.getElementById('completeSection');
-  section.innerHTML =
-    '<a href="/passkey/complete" class="btn btn-success btn-large">Complete Onboarding &rarr;</a>';
-}
-</script>

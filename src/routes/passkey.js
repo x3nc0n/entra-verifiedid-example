@@ -1,124 +1,136 @@
 'use strict';
 
 const express = require('express');
-const { ensureVerified } = require('../middleware/auth');
-const fido2Service = require('../services/fido2-service');
+const config = require('../config');
+const { ensureTapCreated } = require('../middleware/auth');
 const graphService = require('../services/graph-service');
+
 const router = express.Router();
 
-// GET /passkey — render passkey registration page (requires verified identity)
-router.get('/', ensureVerified, (req, res) => {
-  const state = req.session.onboardingState || {};
-  res.render('passkey', {
-    title: 'Register Passkeys',
-    passkeyPhone: state.passkeyPhone || false,
-    passkeyYubikey: state.passkeyYubikey || false,
+function readClientData(publicKeyCredential) {
+  const encoded = publicKeyCredential?.response?.clientDataJSON;
+  if (!encoded) throw new Error('Missing WebAuthn clientDataJSON.');
+  return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+}
+
+function findNewFido2Method(methods, existingMethodIds) {
+  const baselineIds = new Set(existingMethodIds || []);
+  return methods.find((method) => !baselineIds.has(method.id)) || null;
+}
+
+router.get('/', ensureTapCreated, (req, res) => {
+  const state = req.session.onboardingState;
+  return res.render('passkey', {
+    title: 'Register Tenant Passkey',
+    passkeyRegistered: state.passkeyRegistered || false,
+    securityInfoUrl: config.graph.securityInfoUrl,
+    assuranceMode: state.assuranceMode || config.assurance.mode,
   });
 });
 
-/**
- * POST /api/passkey/register/options
- * Generate WebAuthn registration options.
- * Body: { authenticatorType: 'platform' | 'cross-platform' }
- */
-router.post('/register/options', ensureVerified, async (req, res) => {
-  const { authenticatorType } = req.body;
+router.post('/register/options', ensureTapCreated, async (req, res) => {
+  const state = req.session.onboardingState;
   const user = req.session.user;
 
-  if (!authenticatorType || !['platform', 'cross-platform'].includes(authenticatorType)) {
-    return res.status(400).json({ error: 'authenticatorType must be platform or cross-platform' });
-  }
-
   try {
-    const options = await fido2Service.generateRegistrationOptions(user, authenticatorType);
-
-    // Store the challenge in session for verification
-    if (!req.session.challenges) req.session.challenges = {};
-    req.session.challenges[authenticatorType] = options.challenge;
-
-    res.json(options);
-  } catch (err) {
-    console.error('[passkey] Generate options failed:', err.message);
-    res.status(500).json({ error: 'Failed to generate registration options.' });
-  }
-});
-
-/**
- * POST /api/passkey/register/verify
- * Verify and store the WebAuthn registration response.
- * Body: { authenticatorType, registrationResponse }
- */
-router.post('/register/verify', ensureVerified, async (req, res) => {
-  const { authenticatorType, registrationResponse } = req.body;
-  const user = req.session.user;
-
-  if (!authenticatorType || !registrationResponse) {
-    return res.status(400).json({ error: 'Missing authenticatorType or registrationResponse' });
-  }
-
-  const expectedChallenge = req.session.challenges?.[authenticatorType];
-  if (!expectedChallenge) {
-    return res.status(400).json({ error: 'No challenge found for this authenticator type. Request options first.' });
-  }
-
-  try {
-    const verification = await fido2Service.verifyRegistration(
-      expectedChallenge,
-      registrationResponse
+    const options = await graphService.getFido2CreationOptions(
+      state.entraUserId,
+      user.userPrincipalName
     );
-
-    if (!verification.verified) {
-      return res.status(400).json({ error: 'WebAuthn verification failed.' });
-    }
-
-    // Attempt to register the key in Entra ID via Graph API
-    let graphResult = null;
-    try {
-      const graphUser = await graphService.getUserByEmail(user.email);
-      if (graphUser) {
-        graphResult = await graphService.registerFido2Key(
-          graphUser.id,
-          registrationResponse,
-          authenticatorType === 'platform' ? 'Phone Passkey' : 'YubiKey'
-        );
-      }
-    } catch (graphErr) {
-      // Graph registration is best-effort in demo mode
-      console.warn('[passkey] Graph FIDO2 registration warning:', graphErr.message);
-    }
-
-    // Update session state
-    if (!req.session.onboardingState) req.session.onboardingState = {};
-    if (authenticatorType === 'platform') {
-      req.session.onboardingState.passkeyPhone = true;
-    } else {
-      req.session.onboardingState.passkeyYubikey = true;
-    }
-
-    // Clear used challenge
-    delete req.session.challenges[authenticatorType];
-
-    res.json({
-      verified: true,
-      authenticatorType,
-      graphRegistered: !!graphResult,
-    });
+    state.passkeyChallenge = options.publicKey?.challenge;
+    const graphExpiry = Date.parse(options.challengeTimeoutDateTime);
+    state.passkeyChallengeExpiresAt = Number.isFinite(graphExpiry)
+      ? new Date(graphExpiry).toISOString()
+      : new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    return res.json(options);
   } catch (err) {
-    console.error('[passkey] Verify registration failed:', err.message);
-    res.status(500).json({ error: 'Registration verification failed.', details: err.message });
+    console.error('[passkey] Graph creationOptions failed:', err.message);
+    return res.status(502).json({
+      error: 'Microsoft Graph could not create tenant passkey registration options.',
+    });
   }
 });
 
-// GET /passkey/complete — onboarding complete page
-router.get('/complete', (req, res) => {
-  const state = req.session.onboardingState || {};
-  res.render('complete', {
+router.post('/register/verify', ensureTapCreated, async (req, res) => {
+  const state = req.session.onboardingState;
+  const { publicKeyCredential, displayName } = req.body;
+
+  if (!publicKeyCredential) {
+    return res.status(400).json({ error: 'Missing publicKeyCredential.' });
+  }
+  if (!state.passkeyChallenge || !state.passkeyChallengeExpiresAt) {
+    return res.status(400).json({ error: 'Request Graph creation options first.' });
+  }
+  const challengeExpiry = Date.parse(state.passkeyChallengeExpiresAt);
+  if (!Number.isFinite(challengeExpiry) || Date.now() >= challengeExpiry) {
+    return res.status(400).json({ error: 'The Graph passkey challenge has expired.' });
+  }
+
+  try {
+    const clientData = readClientData(publicKeyCredential);
+    if (clientData.type !== 'webauthn.create' ||
+        clientData.challenge !== state.passkeyChallenge) {
+      return res.status(400).json({ error: 'The WebAuthn response does not match this session.' });
+    }
+
+    const graphResult = await graphService.registerFido2Key(
+      state.entraUserId,
+      publicKeyCredential,
+      String(displayName || 'Onboarding passkey').slice(0, 64)
+    );
+    const methods = await graphService.listFido2Methods(state.entraUserId);
+    const baselineIds = new Set(state.existingPasskeyMethodIds || []);
+    if (baselineIds.has(graphResult.id) ||
+        !methods.some((method) => method.id === graphResult.id)) {
+      throw new Error('Graph did not return the created passkey in the user method list.');
+    }
+
+    delete state.passkeyChallenge;
+    delete state.passkeyChallengeExpiresAt;
+    state.passkeyRegistered = true;
+    state.passkeyMethodId = graphResult.id;
+    state.step = 'passkey';
+
+    return res.json({ registered: true, methodId: graphResult.id });
+  } catch (err) {
+    console.error('[passkey] Graph FIDO2 registration failed:', err.message);
+    return res.status(502).json({ error: 'Tenant passkey registration failed.' });
+  }
+});
+
+router.post('/register/confirm', ensureTapCreated, async (req, res) => {
+  const state = req.session.onboardingState;
+  try {
+    const methods = await graphService.listFido2Methods(state.entraUserId);
+    const newMethod = findNewFido2Method(methods, state.existingPasskeyMethodIds);
+    if (!newMethod) {
+      return res.status(404).json({
+        error: 'No new tenant passkey has been registered since this invitation was consumed.',
+      });
+    }
+    state.passkeyRegistered = true;
+    state.passkeyMethodId = newMethod.id;
+    state.step = 'passkey';
+    return res.json({ registered: true, methodId: newMethod.id });
+  } catch (err) {
+    console.error('[passkey] Graph FIDO2 confirmation failed:', err.message);
+    return res.status(502).json({ error: 'Could not confirm the tenant passkey.' });
+  }
+});
+
+router.get('/complete', ensureTapCreated, (req, res) => {
+  const state = req.session.onboardingState;
+  if (!state.passkeyRegistered) return res.redirect('/passkey');
+  state.step = 'complete';
+  state.completedAt = new Date().toISOString();
+  return res.render('complete', {
     title: 'Onboarding Complete',
     user: req.session.user,
-    passkeyPhone: state.passkeyPhone || false,
-    passkeyYubikey: state.passkeyYubikey || false,
-    verifiedClaims: req.session.verifiedClaims || {},
+    verifiedSubject: state.verifiedSubject || {},
+    assuranceMode: state.assuranceMode || config.assurance.mode,
   });
 });
 
 module.exports = router;
+module.exports.readClientData = readClientData;
+module.exports.findNewFido2Method = findNewFido2Method;

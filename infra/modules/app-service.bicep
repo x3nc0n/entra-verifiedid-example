@@ -15,14 +15,8 @@ param azureClientId string
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string
 
-@description('Credential manifest URL.')
-param credentialManifestUrl string
-
 @description('Credential type name.')
 param credentialType string
-
-@description('IdentityPass endpoint URL.')
-param identityPassEndpoint string
 
 @description('FIDO2 relying party display name.')
 param fido2RpName string
@@ -54,8 +48,11 @@ param keyVaultUrl string = ''
 @description('Key Vault secret name for the app credential.')
 param kvNameAppCredential string = 'azure-client-secret'
 
-@description('Key Vault secret name for the IdentityPass key.')
-param kvNameIdentityPass string = 'identitypass-key'
+@description('Key Vault secret name for the Express session secret.')
+param kvNameSessionSecret string = 'session-secret'
+
+@description('Key Vault secret name for the approval integration API key.')
+param kvNameApprovalKey string = 'onboarding-approval-key'
 
 // ── Variables ──────────────────────────────────────────────────────────────────
 
@@ -107,17 +104,17 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
         { name: 'NODE_ENV', value: 'production' }
+        { name: 'ASSURANCE_MODE', value: 'invitation' }
         { name: 'AZURE_TENANT_ID', value: azureTenantId }
         { name: 'AZURE_CLIENT_ID', value: azureClientId }
         // Secrets loaded from Key Vault via managed identity — never stored as plaintext app settings.
         // The bootstrap script (scripts/bootstrap.ps1) seeds these secrets into Key Vault.
         // Key Vault reference format: @Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<name>/)
         { name: 'AZURE_CLIENT_SECRET', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameAppCredential}/)' : '' }
-        { name: 'VERIFIED_ID_AUTHORITY', value: verifiedIdAuthority }
-        { name: 'CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
-        { name: 'CREDENTIAL_TYPE', value: credentialType }
-        { name: 'IDENTITYPASS_ENDPOINT', value: identityPassEndpoint }
-        { name: 'IDENTITYPASS_SUBSCRIPTION_KEY', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameIdentityPass}/)' : '' }
+        { name: 'VC_VERIFIER_AUTHORITY', value: verifiedIdAuthority }
+        { name: 'VC_CREDENTIAL_TYPE', value: credentialType }
+        { name: 'SESSION_SECRET', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameSessionSecret}/)' : '' }
+        { name: 'ONBOARDING_APPROVAL_API_KEY', value: keyVaultUrl != '' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUrl}secrets/${kvNameApprovalKey}/)' : '' }
         { name: 'FIDO2_RP_NAME', value: fido2RpName }
         { name: 'FIDO2_RP_ID', value: fido2RpId }
         { name: 'FIDO2_ORIGIN', value: fido2Origin }

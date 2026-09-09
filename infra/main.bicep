@@ -19,13 +19,13 @@ param azureTenantId string
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string = ''
 
-@description('Credential manifest URL.')
+@description('Legacy compatibility parameter. The onboarding portal does not issue credentials.')
 param credentialManifestUrl string = ''
 
 @description('Credential type name.')
 param credentialType string = 'VerifiedEmployee'
 
-@description('IdentityPass endpoint URL.')
+@description('Legacy compatibility parameter. The invitation flow does not call an identity-proofing provider.')
 param identityPassEndpoint string = ''
 
 @description('FIDO2 relying party display name.')
@@ -89,9 +89,7 @@ module containerApp 'modules/container-app.bicep' = {
     appName: appName
     azureTenantId: azureTenantId
     verifiedIdAuthority: verifiedIdAuthority
-    credentialManifestUrl: credentialManifestUrl
     credentialType: credentialType
-    identityPassEndpoint: identityPassEndpoint
     fido2RpName: fido2RpName
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin

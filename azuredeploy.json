@@ -50,7 +50,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Credential manifest URL."
+        "description": "Legacy compatibility parameter. The onboarding portal does not issue credentials."
       }
     },
     "credentialType": {
@@ -64,7 +64,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "IdentityPass endpoint URL."
+        "description": "Legacy compatibility parameter. The invitation flow does not call an identity-proofing provider."
       }
     },
     "fido2RpName": {
@@ -210,34 +210,6 @@
       }
     },
     {
-      "type": "Microsoft.KeyVault/vaults/secrets",
-      "apiVersion": "2023-07-01",
-      "name": "[concat(variables('kvName'), '/azure-client-secret')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
-      ],
-      "properties": {
-        "value": "PLACEHOLDER--run-bootstrap-to-set",
-        "attributes": {
-          "enabled": true
-        }
-      }
-    },
-    {
-      "type": "Microsoft.KeyVault/vaults/secrets",
-      "apiVersion": "2023-07-01",
-      "name": "[concat(variables('kvName'), '/identitypass-key')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
-      ],
-      "properties": {
-        "value": "PLACEHOLDER--run-bootstrap-to-set",
-        "attributes": {
-          "enabled": true
-        }
-      }
-    },
-    {
       "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
       "apiVersion": "2023-01-31",
       "name": "[variables('appRuntimeUamiName')]",
@@ -326,20 +298,16 @@
                   "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').clientId]"
                 },
                 {
-                  "name": "VC_ISSUER_AUTHORITY",
-                  "value": "[parameters('verifiedIdAuthority')]"
+                  "name": "ASSURANCE_MODE",
+                  "value": "invitation"
                 },
                 {
-                  "name": "VC_CREDENTIAL_MANIFEST_URL",
-                  "value": "[parameters('credentialManifestUrl')]"
+                  "name": "VC_VERIFIER_AUTHORITY",
+                  "value": "[parameters('verifiedIdAuthority')]"
                 },
                 {
                   "name": "VC_CREDENTIAL_TYPE",
                   "value": "[parameters('credentialType')]"
-                },
-                {
-                  "name": "IDENTITYPASS_API_ENDPOINT",
-                  "value": "[parameters('identityPassEndpoint')]"
                 },
                 {
                   "name": "FIDO2_RP_NAME",
@@ -381,8 +349,8 @@
             }
           ],
           "scale": {
-            "minReplicas": 0,
-            "maxReplicas": 2
+            "minReplicas": 1,
+            "maxReplicas": 1
           }
         }
       }

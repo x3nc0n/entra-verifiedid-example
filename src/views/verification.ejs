@@ -4,49 +4,62 @@
   <div class="container">
     <div class="page-header">
       <div class="step-indicator">
-        <span class="step done">1. Enter Details</span>
+        <span class="step done">1. Match User</span>
         <span class="step-sep">&rarr;</span>
-        <span class="step done">2. Approval</span>
+        <span class="step active">2. Present Partner ID</span>
         <span class="step-sep">&rarr;</span>
-        <span class="step done">3. Get Credential</span>
+        <span class="step">3. Sign in with TAP</span>
         <span class="step-sep">&rarr;</span>
-        <span class="step active">4. Verify</span>
-        <span class="step-sep">&rarr;</span>
-        <span class="step">5. Passkeys</span>
+        <span class="step">4. Register Passkey</span>
       </div>
-      <h1 class="page-title">Verify Your Identity</h1>
-      <p class="page-subtitle">Present your <strong>Verified Employee</strong> credential to confirm your identity before setting up passkeys.</p>
+      <h1 class="page-title">Present Partner-Issued Verified ID</h1>
+      <p class="page-subtitle">
+        Present the credential issued by the configured identity-proofing partner.
+        The verified subject must match <strong><%= user.userPrincipalName %></strong>.
+      </p>
     </div>
 
-    <div class="two-col">
-      <div class="qr-panel card" id="verificationPanel">
+    <div class="two-col" id="verificationContent">
+      <div class="qr-panel card">
         <div class="qr-status-bar">
           <span class="status-dot status-waiting" id="statusDot"></span>
-          <span id="statusText">Generating verification request…</span>
+          <span id="statusText">Creating presentation request...</span>
         </div>
         <div class="qr-container" id="qrContainer">
-          <div class="qr-placeholder" id="qrPlaceholder">
-            <div class="spinner"></div>
-          </div>
+          <div class="qr-placeholder" id="qrPlaceholder"><div class="spinner"></div></div>
         </div>
         <div class="qr-actions hidden" id="qrActions">
-          <a href="#" id="qrLink" class="btn btn-secondary btn-small" target="_blank">Open in Authenticator</a>
+          <a href="#" id="qrLink" class="btn btn-secondary btn-small" target="_blank">
+            Open in Authenticator
+          </a>
         </div>
       </div>
 
       <div class="instructions-panel">
-        <h2 class="instructions-title">How to present your credential</h2>
+        <h2 class="instructions-title">Verification checks</h2>
         <ol class="instructions-list">
-          <li>Open <strong>Microsoft Authenticator</strong>.</li>
-          <li>Tap your <strong>Verified Employee</strong> credential card.</li>
-          <li>Tap <strong>Share</strong> and scan the QR code, <em>or</em> tap the link on this device.</li>
-          <li>Confirm the share request in Authenticator.</li>
-          <li>This page will advance automatically.</li>
+          <li>The Verified ID service validates the credential signature, revocation, and linked domain.</li>
+          <li>The portal enforces the configured credential type and partner issuer DID.</li>
+          <li>The configured subject claims must exactly match the pre-created Entra user.</li>
+          <li>Only then does the portal create a one-time Temporary Access Pass.</li>
         </ol>
-        <div id="successMessage" class="alert alert-success hidden">
-          ✅ <strong>Identity verified!</strong> Advancing to passkey setup…
-        </div>
         <div id="errorMessage" class="alert alert-error hidden"></div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="tapPanel">
+      <h2 class="card-section-title">Temporary Access Pass</h2>
+      <div class="alert alert-warning">
+        This value is shown once. Copy it now. The portal does not store it in your session.
+      </div>
+      <p><code id="tapValue"></code></p>
+      <p id="tapLifetime"></p>
+      <div class="form-actions">
+        <button class="btn btn-secondary" id="copyTapBtn" type="button">Copy TAP</button>
+        <a class="btn btn-primary" id="signInLink" target="_blank" rel="noopener">
+          Sign in and register at Microsoft
+        </a>
+        <a class="btn btn-success" href="/passkey">Continue to passkey confirmation</a>
       </div>
     </div>
   </div>
@@ -54,79 +67,75 @@
 
 <%- include('partials/footer') %>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
 <script>
 (async function initVerification() {
-  let pollInterval = null;
+  var pollInterval = null;
 
   function setStatus(text, type) {
     document.getElementById('statusText').textContent = text;
     document.getElementById('statusDot').className = 'status-dot status-' + type;
   }
 
+  function showError(message) {
+    setStatus('Verification failed.', 'error');
+    document.getElementById('errorMessage').textContent = message;
+    document.getElementById('errorMessage').classList.remove('hidden');
+  }
+
   try {
-    setStatus('Creating verification request…', 'waiting');
-    const resp = await fetch('/api/verification/request', { method: 'POST' });
-    if (!resp.ok) throw new Error('Failed to create verification request.');
-    const data = await resp.json();
+    var response = await fetch('/api/verification/request', { method: 'POST' });
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to create presentation request.');
 
     document.getElementById('qrPlaceholder').classList.add('hidden');
-    const qrContainer = document.getElementById('qrContainer');
-    const qrDiv = document.createElement('div');
-    qrDiv.id = 'qrCodeEl';
-    qrContainer.appendChild(qrDiv);
-
     if (data.qrCode) {
-      const img = document.createElement('img');
-      img.src = 'data:image/png;base64,' + data.qrCode;
-      img.alt = 'Verification QR Code';
-      qrContainer.appendChild(img);
+      var image = document.createElement('img');
+      image.src = data.qrCode.indexOf('data:') === 0
+        ? data.qrCode
+        : 'data:image/png;base64,' + data.qrCode;
+      image.alt = 'Verified ID presentation QR code';
+      document.getElementById('qrContainer').appendChild(image);
     } else {
-      new QRCode(document.getElementById('qrCodeEl'), {
-        text: data.url,
-        width: 256,
-        height: 256,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M,
-      });
+      var linkHint = document.createElement('p');
+      linkHint.textContent = 'Open the presentation link on a device with Microsoft Authenticator.';
+      document.getElementById('qrContainer').appendChild(linkHint);
     }
 
-    const link = document.getElementById('qrLink');
-    link.href = data.url;
+    document.getElementById('qrLink').href = data.url;
     document.getElementById('qrActions').classList.remove('hidden');
-    setStatus('Waiting for credential presentation…', 'waiting');
+    setStatus('Waiting for partner credential presentation...', 'waiting');
 
-    pollInterval = setInterval(async () => {
-      try {
-        const sr = await fetch('/api/verification/status/' + data.requestId);
-        const statusData = await sr.json();
+    pollInterval = setInterval(async function() {
+      var statusResponse = await fetch('/api/verification/status/' + data.requestId);
+      var status = await statusResponse.json();
 
-        if (statusData.status === 'request_retrieved') {
-          setStatus('Credential scanned — verifying…', 'active');
-        } else if (statusData.status === 'presentation_verified') {
-          clearInterval(pollInterval);
-          setStatus('Identity verified!', 'success');
-          document.getElementById('successMessage').classList.remove('hidden');
-          setTimeout(() => { window.location.href = '/passkey'; }, 2000);
-        } else if (statusData.status === 'presentation_error') {
-          clearInterval(pollInterval);
-          setStatus('Verification failed.', 'error');
-          document.getElementById('errorMessage').textContent = statusData.message || 'Verification failed.';
-          document.getElementById('errorMessage').classList.remove('hidden');
-        }
-      } catch (_) {}
-    }, 2500);
+      if (status.status === 'request_retrieved') {
+        setStatus('Credential retrieved; verifying...', 'active');
+      } else if (status.status === 'tap_created') {
+        clearInterval(pollInterval);
+        setStatus('Identity matched and TAP created.', 'success');
+        document.getElementById('verificationContent').classList.add('hidden');
+        document.getElementById('tapPanel').classList.remove('hidden');
+        document.getElementById('tapValue').textContent = status.temporaryAccessPass;
+        document.getElementById('tapLifetime').textContent =
+          'One-time pass, valid for ' + status.lifetimeInMinutes + ' minutes.';
+        document.getElementById('signInLink').href = status.signInUrl;
+      } else if (status.status === 'tap_delivered') {
+        clearInterval(pollInterval);
+        showError(status.message);
+      } else if (status.status === 'presentation_error' || status.status === 'tap_error') {
+        clearInterval(pollInterval);
+        showError(status.message || 'Credential verification failed.');
+      }
+    }, 2000);
 
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      setStatus('QR code expired. Please refresh.', 'error');
-    }, 5 * 60 * 1000);
-
+    document.getElementById('copyTapBtn').addEventListener('click', async function() {
+      await navigator.clipboard.writeText(document.getElementById('tapValue').textContent);
+      this.textContent = 'Copied';
+    });
   } catch (err) {
-    setStatus('Error: ' + err.message, 'error');
-    document.getElementById('errorMessage').textContent = err.message;
-    document.getElementById('errorMessage').classList.remove('hidden');
+    if (pollInterval) clearInterval(pollInterval);
+    showError(err.message);
   }
 })();
 </script>

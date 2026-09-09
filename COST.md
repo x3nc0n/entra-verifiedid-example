@@ -81,7 +81,7 @@ used by the solution are part of your Microsoft Entra ID licensing:
 - **Verified ID** — included with Entra ID P1/P2
 - **Temporary Access Pass (TAP)** — included with Entra ID P1/P2
 - **FIDO2 Security Key registration** — included with Entra ID
-- **IdentityPass** — separate Microsoft service (contact your Microsoft representative)
+- **Invitation email delivery / future proofing partner** — priced by the approved external provider, if enabled
 
 ---
 
