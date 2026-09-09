@@ -186,7 +186,7 @@ The approved end-to-end proof-of-concept sequence is:
 
 This differs from the current application. The following corrections are mandatory before live deployment:
 
-- Replace the placeholder identity-proofing `/requests` contract with the actual approved provider contract.
+- Replace the placeholder identity-proofing `/requests` contract with an actual approved provider contract. The configured `https://identitypass.microsoft.com/api/v1` endpoint returns only a product label, and no public request, status, authentication, or callback contract was found. It must not be treated as a callable tenant service.
 - Consume and verify a partner-issued credential instead of issuing a new employee credential before proofing.
 - Add tenant-user matching and TAP creation.
 - Retrieve passkey `creationOptions` from the directory API; do not generate an application-domain WebAuthn challenge and submit it as a tenant passkey.
@@ -276,7 +276,7 @@ West US 2 service support and the applicable regional quotas were checked read-o
 
 ## 8. Required Inputs Before Live End-to-End Testing
 
-1. **Identity-proofing provider contract:** provide the real endpoint, authentication method, request/response schema, callback-signing rules, and test credentials through an approved secret channel.
+1. **Identity-proofing provider contract:** select a generally available identity-verification provider that can issue or support issuance of the credential, then provide the real endpoint, authentication method, request/response schema, callback-signing rules, and test credentials through an approved secret channel. The repository's default IdentityPass URL is not an actionable API contract.
 2. **Test tenant user:** provide an existing non-production user UPN whose HR/proofing claims can be matched. The account must be pre-created before the flow starts.
 3. **TAP/FIDO2 pilot scope:** provide or approve creation of a dedicated pilot group containing only the test user.
 4. **Administrative operators:** confirm access to an Authentication Policy Administrator for policy changes and an Authentication Administrator or equivalent application-permission grant path for TAP/passkey operations.
