@@ -113,6 +113,9 @@ jobs:
             --set-env-vars \
               "ASSURANCE_MODE=invitation" \
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
+              "DEMO_MODE=false" \
+              "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "ONBOARDING_STATE_BACKEND=azure-table" \
               "SESSION_SECRET=secretref:session-secret" \
               "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
             --only-show-errors
@@ -225,6 +228,9 @@ jobs:
             --set-env-vars \
               "ASSURANCE_MODE=invitation" \
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
+              "DEMO_MODE=false" \
+              "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "ONBOARDING_STATE_BACKEND=azure-table" \
               "SESSION_SECRET=secretref:session-secret" \
               "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
             --only-show-errors

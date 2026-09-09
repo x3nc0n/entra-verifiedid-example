@@ -1,3 +1,18 @@
+<% if (activateFromFragment) { %>
+<script src="/js/invitation.js"></script>
+<script>
+InvitationActivation.activateFromCurrentFragment().catch(function(error) {
+  document.addEventListener('DOMContentLoaded', function() {
+    var status = document.getElementById('invitationActivationStatus');
+    if (status) {
+      status.textContent = error.message;
+      status.classList.remove('hidden');
+    }
+  });
+});
+</script>
+<% } %>
+
 <%- include('partials/header') %>
 
 <main class="main-content">
@@ -27,7 +42,7 @@
 
     <% if (invitationActive) { %>
       <div class="card form-card">
-        <form method="POST" action="/onboarding/invite/<%= token %>" id="invitationForm" novalidate>
+        <form method="POST" action="/onboarding/invite" id="invitationForm" novalidate>
           <div class="form-group">
             <label for="personalEmail" class="form-label">
               Personal Email Address <span class="required">*</span>
@@ -76,6 +91,10 @@
       </div>
     <% } else { %>
       <div class="card">
+        <% if (activateFromFragment) { %>
+          <div id="invitationActivationStatus" class="alert alert-error hidden" role="alert"></div>
+          <p>Validating the manager-approved invitation...</p>
+        <% } else { %>
         <p>
           Ask the pilot approver to complete the manager approval workflow and send the
           generated invitation to the known personal email address.
@@ -83,6 +102,7 @@
         <% if (demoMode) { %>
           <p><a href="/onboarding/demo" class="btn btn-secondary">Create local demo invitation</a></p>
           <p class="form-hint">Demo values: demo.user@personal.example and DEMO-001.</p>
+        <% } %>
         <% } %>
       </div>
     <% } %>

@@ -28,7 +28,7 @@ param fido2RpId string
 param fido2Origin string
 
 @description('Enable demo mode.')
-param demoMode bool = true
+param demoMode bool = false
 
 @description('App Service Plan SKU name.')
 param appServiceSku string = 'B1'

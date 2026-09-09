@@ -13,17 +13,25 @@ general-purpose identity-proofing system.
 - An approved upstream workflow chooses the immutable Entra object ID.
 - The browser never chooses or supplies the tenant account.
 - The raw invitation token has 256 bits of entropy and is not stored.
-- Invitation URL paths are redacted from application logs.
+- The invitation token exists only in the URL fragment, which is cleared before
+  the browser posts it in an HTTPS JSON body.
+- Normal application access logs record only request paths, not query strings,
+  fragments, or request bodies.
 - Invitation pages disable caching and referrer propagation.
 - Known personal email and employee ID are hash-compared before consumption.
 - Invitations expire, limit failed attempts, and reject replay.
-- TAP creation happens after invitation consumption.
+- Invitation state is durable in Azure Table Storage and consumption uses ETag
+  optimistic concurrency.
+- Shared Express sessions use a separate Azure Table.
+- Immediately before TAP creation, Graph reloads the immutable object ID and
+  requires an enabled account with current pilot-group membership.
 - TAPs are single-use, short-lived, shown once, and not stored in the session.
 - Passkey registration is confirmed through Microsoft Graph.
 
-The in-memory invitation repository is safe only for a single-process pilot. Run
-one always-on replica; scale-to-zero, restarts, or multiple replicas lose or split
-invitation, session, and callback state until durable shared storage replaces it.
+Memory-backed invitations and sessions are allowed only for deliberate local
+demo mode. Production startup rejects demo mode, missing pilot-group scope, and
+non-durable state configuration. The future Verified ID callback flow remains
+production-blocked until its callback state is durable.
 
 ## Demo mode
 
@@ -36,9 +44,10 @@ demo mode to real users or interpret its results as identity assurance.
 - [ ] `SESSION_SECRET` is a random secret stored in Key Vault.
 - [ ] `ONBOARDING_APPROVAL_API_KEY` is random, stored in Key Vault, and available only to the approved manager workflow.
 - [ ] The approval endpoint is not reachable through an untrusted public client.
-- [ ] Invitation delivery does not log or forward the raw URL to analytics systems.
-- [ ] The app runs one always-on replica, or all onboarding state uses durable shared storage.
-- [ ] TAP policy is scoped to the pilot users and permits the configured lifetime.
+- [ ] Invitation delivery does not log or forward the fragment-bearing URL to analytics systems.
+- [ ] Azure Table invitation/session storage and managed-identity RBAC are provisioned.
+- [ ] `PILOT_GROUP_ID` identifies the approved dedicated pilot group.
+- [ ] TAP and FIDO2 policy are scoped to that group and permit the configured lifetime.
 - [ ] Runtime Graph app roles are reduced to the least-privilege user-read, TAP, and passkey roles supported by the tenant.
 - [ ] HTTPS is enforced.
 - [ ] Application logs and telemetry are checked for invitation/TAP leakage.

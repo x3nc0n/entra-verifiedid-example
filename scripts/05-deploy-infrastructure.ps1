@@ -70,6 +70,9 @@
     FIDO2 allowed origin — the full HTTPS URL
     (for example: https://myapp.<env-hash>.centralus.azurecontainerapps.io).
 
+.PARAMETER PilotGroupId
+    Immutable object ID of the dedicated Entra pilot group. Required for live runs.
+
 .PARAMETER DemoMode
     Skip real deployments and print what would happen.
 
@@ -116,6 +119,9 @@ param(
     [string]$Fido2RpId    = "",
     [string]$Fido2Origin  = "",
 
+    [AllowEmptyString()]
+    [string]$PilotGroupId = "",
+
     [switch]$DemoMode
 )
 
@@ -135,12 +141,20 @@ function Assert-ExplicitGuidParameter {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName is required for live runs. This public example repo does not ship a default $ParameterName. Pass -$ParameterName $placeholder explicitly."
     }
 
     if ($Value -notmatch '^[0-9a-fA-F-]{36}$') {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName must be a GUID. Pass -$ParameterName $placeholder explicitly."
     }
 }
@@ -171,6 +185,7 @@ if ($DemoMode) {
 } else {
     Assert-ExplicitGuidParameter -ParameterName "TenantId" -Value $TenantId
     Assert-ExplicitGuidParameter -ParameterName "SubscriptionId" -Value $SubscriptionId
+    Assert-ExplicitGuidParameter -ParameterName "PilotGroupId" -Value $PilotGroupId
 }
 
 # ── Step 1: Resource Group ─────────────────────────────────────────────────────
@@ -258,6 +273,7 @@ $containerAppPrincipalId = ""
 $appRuntimeManagedIdentityName = ""
 $appRuntimeManagedIdentityClientId = ""
 $appRuntimeManagedIdentityPrincipalId = ""
+$storageTableEndpoint = ""
 
 if (-not $DemoMode -and $templateFile) {
     # Build the parameter hashtable — only include optional params when non-empty
@@ -274,6 +290,7 @@ if (-not $DemoMode -and $templateFile) {
         fido2RpName           = $AppName
         fido2RpId             = $fido2RpIdValue
         fido2Origin           = $fido2OriginValue
+        pilotGroupId          = $PilotGroupId
         demoMode              = $DemoMode.IsPresent
     }
 
@@ -303,6 +320,7 @@ if (-not $DemoMode -and $templateFile) {
             $appRuntimeManagedIdentityName = $deployment.Outputs['appRuntimeManagedIdentityName']?.Value ?? ""
             $appRuntimeManagedIdentityClientId = $deployment.Outputs['appRuntimeManagedIdentityClientId']?.Value ?? ""
             $appRuntimeManagedIdentityPrincipalId = $deployment.Outputs['appRuntimeManagedIdentityPrincipalId']?.Value ?? ""
+            $storageTableEndpoint = $deployment.Outputs['storageTableEndpoint']?.Value ?? ""
 
             Write-Info "Container App: $webAppHostname"
             Write-Info "Key Vault:  $keyVaultUri"
@@ -318,6 +336,9 @@ if (-not $DemoMode -and $templateFile) {
             }
             if ($appRuntimeManagedIdentityPrincipalId) {
                 Write-Info "Runtime UAMI principal ID: $appRuntimeManagedIdentityPrincipalId"
+            }
+            if ($storageTableEndpoint) {
+                Write-Info "Table endpoint: $storageTableEndpoint"
             }
             if ($appInsightsKey.Length -ge 8) {
                 Write-Info "App Insights key: $($appInsightsKey.Substring(0,8))..."
@@ -344,6 +365,7 @@ if (-not $DemoMode -and $templateFile) {
     $appRuntimeManagedIdentityName = "uami-$AppName-app"
     $appRuntimeManagedIdentityClientId = "demo-runtime-uami-client-id"
     $appRuntimeManagedIdentityPrincipalId = "demo-runtime-uami-principal-id"
+    $storageTableEndpoint = "https://$storageAccount.table.core.windows.net/"
 }
 
 $webAppUrl = if ($webAppHostname) { "https://$webAppHostname" } else { "https://$AppName.demo.$Location.azurecontainerapps.io" }
@@ -443,6 +465,7 @@ $output = @{
     AppRuntimeManagedIdentityName = $appRuntimeManagedIdentityName
     AppRuntimeManagedIdentityClientId = $appRuntimeManagedIdentityClientId
     AppRuntimeManagedIdentityPrincipalId = $appRuntimeManagedIdentityPrincipalId
+    StorageTableEndpoint = $storageTableEndpoint
 }
 
 Format-Summary -Title "Infrastructure Deployment Output" -Values @{

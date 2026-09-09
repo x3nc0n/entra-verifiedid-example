@@ -14,6 +14,23 @@ function parseInteger(value, fallback) {
   return Number.isInteger(parsed) ? parsed : fallback;
 }
 
+function isGuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    .test(String(value || ''));
+}
+
+function isHttpsUrl(value) {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isTableName(value) {
+  return /^[A-Za-z][A-Za-z0-9]{2,62}$/.test(String(value || ''));
+}
+
 const config = {
   // ── Application ─────────────────────────────────────────────────────────────
   port: parseInt(process.env.PORT, 10) || 3000,
@@ -68,9 +85,20 @@ const config = {
   graph: {
     baseUrl: 'https://graph.microsoft.com',
     scope: 'https://graph.microsoft.com/.default',
+    pilotGroupId: process.env.PILOT_GROUP_ID || '',
     tapLifetimeMinutes: parseInteger(process.env.TAP_LIFETIME_MINUTES, 60),
     securityInfoUrl: process.env.ENTRA_SECURITY_INFO_URL ||
       'https://mysignins.microsoft.com/security-info',
+  },
+
+  // ── Durable state ────────────────────────────────────────────────────────────
+  storage: {
+    backend: process.env.ONBOARDING_STATE_BACKEND || 'memory',
+    tableEndpoint: process.env.AZURE_STORAGE_TABLE_ENDPOINT || '',
+    invitationTableName: process.env.ONBOARDING_INVITATIONS_TABLE ||
+      'onboardingInvitations',
+    sessionTableName: process.env.ONBOARDING_SESSIONS_TABLE ||
+      'onboardingSessions',
   },
 
   // ── FIDO2 / WebAuthn ─────────────────────────────────────────────────────────
@@ -95,5 +123,52 @@ if (config.assurance.invitationMaxAttempts < 1 ||
     config.assurance.invitationMaxAttempts > 20) {
   throw new Error('INVITATION_MAX_ATTEMPTS must be between 1 and 20.');
 }
+
+function validateRuntimeConfiguration() {
+  const errors = [];
+  const production = config.nodeEnv === 'production';
+
+  if (!['memory', 'azure-table'].includes(config.storage.backend)) {
+    errors.push('ONBOARDING_STATE_BACKEND must be memory or azure-table.');
+  }
+  if (production && config.demoMode) {
+    errors.push('DEMO_MODE must be false in production.');
+  }
+  if (!config.demoMode) {
+    if (!isGuid(config.graph.pilotGroupId)) {
+      errors.push('PILOT_GROUP_ID must be the dedicated pilot group object ID.');
+    }
+    if (config.storage.backend !== 'azure-table') {
+      errors.push(
+        'Non-demo startup requires ONBOARDING_STATE_BACKEND=azure-table.'
+      );
+    }
+    if (!isHttpsUrl(config.storage.tableEndpoint)) {
+      errors.push(
+        'AZURE_STORAGE_TABLE_ENDPOINT must be an HTTPS Table service endpoint.'
+      );
+    }
+    if (!isTableName(config.storage.invitationTableName) ||
+        !isTableName(config.storage.sessionTableName)) {
+      errors.push(
+        'Azure Table names must be 3-63 alphanumeric characters and start with a letter.'
+      );
+    }
+  }
+  if (production && !isHttpsUrl(config.appBaseUrl)) {
+    errors.push('APP_BASE_URL must use HTTPS in production.');
+  }
+  if (production && config.assurance.mode === 'verified-id') {
+    errors.push(
+      'ASSURANCE_MODE=verified-id is blocked in production until callback state is durable.'
+    );
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Unsafe runtime configuration:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+config.validateRuntimeConfiguration = validateRuntimeConfiguration;
 
 module.exports = config;

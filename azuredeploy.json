@@ -88,11 +88,17 @@
         "description": "FIDO2 allowed origin including scheme (for example https://<container-app-fqdn>)."
       }
     },
+    "pilotGroupId": {
+      "type": "string",
+      "metadata": {
+        "description": "Immutable object ID of the dedicated Entra pilot group. No tenant-wide default is permitted."
+      }
+    },
     "demoMode": {
       "type": "bool",
-      "defaultValue": true,
+      "defaultValue": false,
       "metadata": {
-        "description": "Enable demo mode (loosened auth for demo purposes)."
+        "description": "Enable local-only demo mode. Production must explicitly remain false."
       }
     }
   },
@@ -178,6 +184,30 @@
       }
     },
     {
+      "type": "Microsoft.Storage/storageAccounts/tableServices",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('saName'), '/default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('saName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('saName'), '/default/onboardingInvitations')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('saName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('saName'), '/default/onboardingSessions')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('saName'), 'default')]"
+      ]
+    },
+    {
       "type": "Microsoft.ContainerRegistry/registries",
       "apiVersion": "2023-07-01",
       "name": "[variables('acrName')]",
@@ -251,7 +281,9 @@
         "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]",
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
-        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]"
+        "[resourceId('Microsoft.KeyVault/vaults', variables('kvName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingInvitations')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingSessions')]"
       ],
       "properties": {
         "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
@@ -322,12 +354,32 @@
                   "value": "[parameters('fido2Origin')]"
                 },
                 {
+                  "name": "PILOT_GROUP_ID",
+                  "value": "[parameters('pilotGroupId')]"
+                },
+                {
                   "name": "KEY_VAULT_URL",
                   "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('kvName')), '2023-07-01').vaultUri]"
                 },
                 {
                   "name": "DEMO_MODE",
                   "value": "[string(parameters('demoMode'))]"
+                },
+                {
+                  "name": "ONBOARDING_STATE_BACKEND",
+                  "value": "azure-table"
+                },
+                {
+                  "name": "AZURE_STORAGE_TABLE_ENDPOINT",
+                  "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('saName')), '2023-05-01').primaryEndpoints.table]"
+                },
+                {
+                  "name": "ONBOARDING_INVITATIONS_TABLE",
+                  "value": "onboardingInvitations"
+                },
+                {
+                  "name": "ONBOARDING_SESSIONS_TABLE",
+                  "value": "onboardingSessions"
                 },
                 {
                   "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
@@ -350,7 +402,7 @@
           ],
           "scale": {
             "minReplicas": 1,
-            "maxReplicas": 1
+            "maxReplicas": 2
           }
         }
       }
@@ -384,6 +436,36 @@
         "principalType": "ServicePrincipal",
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]"
       }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingInvitations')]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingInvitations'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').principalId, 'Storage Table Data Contributor')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingInvitations')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]"
+      ],
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')]"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingSessions')]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingSessions'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').principalId, 'Storage Table Data Contributor')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('saName'), 'default', 'onboardingSessions')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName'))]"
+      ],
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appRuntimeUamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')]"
+      }
     }
   ],
   "outputs": {
@@ -406,6 +488,10 @@
     "storageAccountName": {
       "type": "string",
       "value": "[variables('saName')]"
+    },
+    "storageTableEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('saName')), '2023-05-01').primaryEndpoints.table]"
     },
     "containerRegistryName": {
       "type": "string",

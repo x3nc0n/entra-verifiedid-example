@@ -40,13 +40,20 @@ mapping, and delivery/issuance contract.
 - Invitation tokens contain 256 bits of randomness.
 - Only the SHA-256 token hash is stored; the raw token is returned once in the
   invitation URL.
-- Invitation URLs are redacted from HTTP request logs.
+- Invitation links carry the bearer token only in the URL fragment. The browser
+  clears the fragment before posting the token in an HTTPS JSON request body.
+- Application access logs record only the request path, so the normal activation
+  flow cannot place the token in route or query logs.
 - Invitation pages send `Cache-Control: no-store` and
   `Referrer-Policy: no-referrer`.
 - Validation compares hashed normalized personal email and employee ID values.
 - Failed validation attempts are limited.
-- The active-to-consumed transition is synchronous and single-use.
+- Azure Table Storage persists invitation state and enforces the active-to-consumed
+  transition with ETag compare-and-set semantics.
+- Express sessions use a shared Azure Table store outside local demo mode.
 - The Entra user is selected by immutable object ID before link creation.
+- Immediately before TAP creation, Graph reloads that object ID and requires
+  `accountEnabled=true` plus current transitive membership in `PILOT_GROUP_ID`.
 - TAPs are created with `isUsableOnce: true`, displayed once, and never written
   to logs or the session.
 - Production FIDO2 options come from Microsoft Graph v1.0; the portal does not
@@ -57,15 +64,14 @@ mapping, and delivery/issuance contract.
 
 ## Pilot limitations
 
-The current invitation repository is an in-memory `Map`. Its consume transition
-is atomic only inside one Node.js process. Keep the pilot at **one always-on
-application replica**. Before enabling multiple replicas or restart-safe invitations, replace
-`src/services/invitation-service.js` with a durable store that supports a
-transactional compare-and-set from `active` to `consumed`.
-
 The approval endpoint returns the invitation URL but does not send email. Connect
 it to an approved manager workflow and email provider; do not expose the endpoint
 directly to browsers.
+
+Production startup is fail-closed unless demo mode is off, the dedicated pilot
+group object ID is configured, and the Azure Table state backend is available.
+The future `verified-id` mode remains production-blocked because its callback
+correlation store is not yet durable.
 
 Microsoft Graph can return FIDO2 creation options whose relying-party ID is owned
 by Microsoft and therefore cannot be used from the portal's web origin. The
@@ -122,11 +128,12 @@ Body:
 ```
 
 The API reads the user by object ID from Microsoft Graph, refuses missing or
-disabled users, and returns the invitation URL once:
+disabled users or users outside the configured pilot group, and returns the
+invitation URL once:
 
 ```json
 {
-  "invitationUrl": "https://<portal>/onboarding/invite/<opaque-token>",
+  "invitationUrl": "https://<portal>/onboarding/invite#token=<opaque-token>",
   "expiresAt": "<timestamp>",
   "user": {
     "id": "<immutable-entra-object-id>",
@@ -143,8 +150,9 @@ email.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /onboarding/invite/:token` | Check invitation availability and render validation form. |
-| `POST /onboarding/invite/:token` | Validate evidence, consume invitation, and create TAP. |
+| `GET /onboarding/invite` | Render the fragment activation or evidence-validation page without a token in the request URL. |
+| `POST /onboarding/invite/activate` | Accept the fragment token in a no-store JSON body and bind its digest to the server-side session. |
+| `POST /onboarding/invite` | Validate evidence, atomically consume the bound invitation, revalidate the user/group, and create TAP. |
 | `POST /passkey/register/options` | Retrieve Entra FIDO2 `creationOptions` from Graph. |
 | `POST /passkey/register/verify` | Submit the WebAuthn public key credential to Graph and confirm it exists. |
 | `POST /passkey/register/confirm` | Confirm a passkey registered through Microsoft Security info. |
@@ -168,6 +176,11 @@ email.
 | `ENTRA_SECURITY_INFO_URL` | No | Microsoft Security info | TAP sign-in/passkey registration destination. |
 | `AZURE_TENANT_ID` | Live | None | Entra tenant. |
 | `AZURE_CLIENT_ID` | Azure UAMI | None | Runtime user-assigned managed identity client ID. |
+| `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked immediately before TAP creation. |
+| `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
+| `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
+| `ONBOARDING_INVITATIONS_TABLE` | No | `onboardingInvitations` | Durable invitation table name. |
+| `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
 | `VC_SERVICE_SCOPE` | Future Verified ID | Request Service default | Verified ID Request Service token scope. |
 | `VC_VERIFIER_AUTHORITY` | Future Verified ID | None | Verifier tenant DID. |
 | `VC_CREDENTIAL_TYPE` | Future Verified ID | None | Partner credential type. |
@@ -179,8 +192,9 @@ email.
 | `FIDO2_RP_ID` | Demo only | `localhost` | Local demo relying-party ID. |
 
 `DefaultAzureCredential` is used for Microsoft Graph and Verified ID. The runtime
-identity currently needs directory user read access and authentication-method
-write access. The repository bootstrap scripts still grant the broader
+identity currently needs directory user read access, `GroupMember.Read.All` for
+the user-scoped `checkMemberGroups` call, and authentication-method write access.
+The repository bootstrap scripts still grant the broader
 `UserAuthenticationMethod.ReadWrite.All`; a tenant/security owner should replace
 that with the current least-privilege TAP and passkey app roles after validating
 tenant availability.
@@ -206,13 +220,15 @@ through the ACR/GitHub Actions flow.
    deliberately do not create or overwrite secret values. The workflow maps
    them to `SESSION_SECRET` and `ONBOARDING_APPROVAL_API_KEY`; production
    startup rejects missing values and known placeholder values.
-2. Keep exactly one always-on replica or replace the invitation repository,
-   session store, and callback store with a durable transactional implementation.
-3. Connect the approval endpoint to an authenticated manager workflow.
-4. Deliver the returned invitation through an approved mail provider without
+2. Set the exact dedicated `PILOT_GROUP_ID`, confirm that TAP/FIDO2 policy is
+   scoped to it, and grant the runtime identity the required Graph application roles.
+3. Confirm the provisioned runtime identity has `Storage Table Data Contributor`
+   only on the two dedicated onboarding tables.
+4. Connect the approval endpoint to an authenticated manager workflow.
+5. Deliver the returned invitation through an approved mail provider without
    logging the raw URL.
-5. Confirm TAP/passkey policy scope and Graph app permissions for the pilot user.
-6. If enabling `verified-id`, obtain the real provider contract and configure the
+6. If enabling `verified-id`, first implement durable callback correlation, then
+   obtain the real provider contract and configure the
    exact issuer, type, claims, presentation callback authentication, and subject
    matching rules.
 

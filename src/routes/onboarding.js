@@ -33,55 +33,120 @@ function initializeSession(req, invitation) {
   };
 }
 
+function renderInvitationPage(res, options = {}) {
+  return res.status(options.status || 200).render('onboarding', {
+    title: options.title || 'Onboarding Invitation Required',
+    invitationActive: options.invitationActive || false,
+    activateFromFragment: options.activateFromFragment || false,
+    expiresAt: options.expiresAt,
+    errors: options.errors || null,
+  });
+}
+
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => err ? reject(err) : resolve());
+  });
+}
+
 router.get('/', (req, res) => {
   setPrivateResponseHeaders(res);
-  return res.render('onboarding', {
-    title: 'Onboarding Invitation Required',
-    token: null,
-    invitationActive: false,
-    errors: null,
-  });
+  return renderInvitationPage(res);
 });
 
-router.get('/demo', (req, res) => {
+router.get('/demo', async (req, res) => {
   if (!config.demoMode) return res.status(404).end();
-  const invitation = invitationService.createInvitation({
+  const invitation = await invitationService.createInvitation({
     entraUserId: 'demo-user-id-00000000-0000-0000-0000-000000000001',
     userPrincipalName: 'demo.user@tenant.example',
     displayName: 'Demo User',
     personalEmail: 'demo.user@personal.example',
     employeeId: 'DEMO-001',
   });
-  return res.redirect(`/onboarding/invite/${invitation.token}`);
+  return res.redirect(`/onboarding/invite#token=${encodeURIComponent(invitation.token)}`);
 });
 
-router.get('/invite/:token', (req, res) => {
+router.post('/invite/activate', async (req, res) => {
   setPrivateResponseHeaders(res);
-  const invitation = invitationService.inspectInvitation(req.params.token);
-  return res.status(invitation.active ? 200 : 410).render('onboarding', {
-    title: invitation.active ? 'Validate Onboarding Invitation' : 'Invitation Unavailable',
-    token: req.params.token,
-    invitationActive: invitation.active,
+  try {
+    const invitation = await invitationService.activateInvitation(req.body.token);
+    if (!invitation.active) {
+      return res.status(410).json({
+        error: 'This invitation is invalid, expired, or already used.',
+      });
+    }
+
+    await regenerateSession(req);
+    req.session.invitationReference = invitation.reference;
+    return res.status(204).end();
+  } catch (err) {
+    console.error('[onboarding] Invitation activation failed:', err.message);
+    return res.status(503).json({
+      error: 'Invitation validation is temporarily unavailable.',
+    });
+  }
+});
+
+router.get('/invite', async (req, res) => {
+  setPrivateResponseHeaders(res);
+  const reference = req.session.invitationReference;
+  if (!reference) {
+    return renderInvitationPage(res, {
+      title: 'Validate Onboarding Invitation',
+      activateFromFragment: true,
+    });
+  }
+  let invitation;
+  try {
+    invitation = await invitationService.inspectInvitation(reference);
+  } catch (err) {
+    console.error('[onboarding] Invitation lookup failed:', err.message);
+    return renderInvitationPage(res, {
+      status: 503,
+      title: 'Invitation Temporarily Unavailable',
+      errors: ['Invitation validation is temporarily unavailable.'],
+    });
+  }
+  if (!invitation.active) {
+    delete req.session.invitationReference;
+    return renderInvitationPage(res, {
+      status: 410,
+      title: 'Invitation Unavailable',
+      errors: ['This invitation is invalid, expired, or already used.'],
+    });
+  }
+  return renderInvitationPage(res, {
+    title: 'Validate Onboarding Invitation',
+    invitationActive: true,
     expiresAt: invitation.expiresAt,
-    errors: invitation.active ? null : ['This invitation is invalid, expired, or already used.'],
   });
 });
 
-router.post('/invite/:token', async (req, res) => {
+router.post('/invite', async (req, res) => {
   setPrivateResponseHeaders(res);
+  const reference = req.session.invitationReference;
+  if (!reference) {
+    return renderInvitationPage(res, {
+      status: 400,
+      title: 'Invitation Unavailable',
+      errors: ['Open the manager-approved invitation link before entering details.'],
+    });
+  }
 
   let invitation;
   try {
-    invitation = invitationService.consumeInvitation(req.params.token, {
+    invitation = await invitationService.consumeInvitation(reference, {
       personalEmail: req.body.personalEmail,
       employeeId: req.body.employeeId,
     });
+    delete req.session.invitationReference;
   } catch (err) {
     const status = err instanceof invitationService.InvitationError ? 400 : 500;
-    return res.status(status).render('onboarding', {
+    const current = await invitationService.inspectInvitation(reference);
+    return renderInvitationPage(res, {
+      status,
       title: 'Validate Onboarding Invitation',
-      token: req.params.token,
-      invitationActive: true,
+      invitationActive: current.active,
       errors: [err.message],
     });
   }
@@ -98,8 +163,8 @@ router.post('/invite/:token', async (req, res) => {
     console.error('[onboarding] Existing passkey lookup failed after invitation consumption:', err.message);
     return res.status(502).render('onboarding', {
       title: 'Invitation Consumed',
-      token: null,
       invitationActive: false,
+      activateFromFragment: false,
       errors: [
         'The invitation was consumed, but Microsoft Graph could not establish the existing passkey baseline. An approver must issue a new invitation.',
       ],
@@ -111,7 +176,9 @@ router.post('/invite/:token', async (req, res) => {
   }
 
   try {
-    const tap = await graphService.createTemporaryAccessPass(invitation.entraUserId);
+    const { tap } = await graphService.createTemporaryAccessPassForPilotUser(
+      invitation.entraUserId
+    );
     req.session.onboardingState.tapCreated = true;
     return res.render('tap', {
       title: 'Temporary Access Pass',
@@ -123,10 +190,12 @@ router.post('/invite/:token', async (req, res) => {
     console.error('[onboarding] TAP creation failed after invitation consumption:', err.message);
     return res.status(502).render('onboarding', {
       title: 'Invitation Consumed',
-      token: null,
       invitationActive: false,
+      activateFromFragment: false,
       errors: [
-        'The invitation was consumed, but Microsoft Graph could not create the Temporary Access Pass. An approver must issue a new invitation.',
+        err instanceof graphService.PilotEligibilityError
+          ? 'The invitation-bound account is no longer enabled or in the configured pilot group. No Temporary Access Pass was created.'
+          : 'The invitation was consumed, but Microsoft Graph could not create the Temporary Access Pass. An approver must issue a new invitation.',
       ],
     });
   }
@@ -151,3 +220,4 @@ router.get('/approved', (req, res) => res.redirect('/onboarding'));
 
 module.exports = router;
 module.exports.initializeSession = initializeSession;
+module.exports.regenerateSession = regenerateSession;

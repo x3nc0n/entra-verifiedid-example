@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Approved for implementation and validation; cloud deployment and the conditional Power Pages bootstrap remain gated on the prerequisites below
+> **Status:** Security hardening implemented and locally validated; cloud validation, deployment, tenant changes, and the conditional Power Pages bootstrap remain gated on the prerequisites below
 
 Generated: 2026-09-09
 
@@ -48,7 +48,7 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 
 ### Approved proof-of-concept defaults
 
-- The initial target remains a demo or proof of concept. The current application stores sessions and issuance/presentation callback state in process memory, so it is not production-safe across restarts or multiple replicas.
+- The initial target remains a demo or proof of concept. Invitation and Express session state are now Azure Table-backed; the future Verified ID callback state remains process-local and is production-blocked.
 - Existing low-cost defaults are acceptable: Basic container registry, consumption-style container hosting, locally redundant storage, and scale-to-zero.
 - A single region is acceptable.
 - The deployment will use the existing GitHub Actions environments and repository-bound OIDC model.
@@ -170,12 +170,11 @@ Credential-service authority, contract, trusted-domain binding, and any signing-
 
 ### Known implementation constraints
 
-- `express-session` uses its default in-memory store.
-- Issuance and presentation callbacks are held in in-memory maps.
-- The storage account is provisioned but is not wired into application state.
-- The current architecture is therefore appropriate only for demo use until invitation and onboarding state move to a durable store with atomic consume semantics.
-- The storage module exposes a primary-key connection string as a deployment output. The Bicep linter flags this as a possible secret-bearing output; it must not be propagated, logged, or adopted as the application access model.
-- The invitation implementation should add a table service/table and grant the runtime identity table-data access. It must use managed identity rather than the secret-bearing connection-string output.
+- Invitation records and Express sessions use separate Azure Tables.
+- Invitation consumption uses ETag compare-and-set semantics across replicas.
+- The storage connection-string output has been removed; the runtime uses the UAMI and the Table service HTTPS endpoint.
+- The runtime UAMI receives `Storage Table Data Contributor` separately at the invitation and session table scopes.
+- Verified ID presentation callbacks remain process-local, so production startup blocks `ASSURANCE_MODE=verified-id`.
 - `docs/architecture.md` still describes a legacy App Service/Cosmos shape. Use the Bicep, ARM template, workflows, and current README as deployment evidence instead.
 - The tenant bootstrap script performs multiple cloud and directory mutations. It must not be used as a single unattended command before each mutation and scope are reviewed.
 - The FIDO2/TAP script refuses implicit tenant-wide rollout unless an explicit override is passed. Dedicated onboarding groups are the safer default.
@@ -357,14 +356,14 @@ West US 2 service support and the applicable regional quotas were checked read-o
 ### Phase 2: Implementation and validation
 
 - [x] Research and confirm service-specific requirements for the selected region
-- [ ] Replace the placeholder identity-proofing flow with authenticated manager invitation approval
-- [ ] Implement durable invitation records and atomic one-time token redemption
-- [ ] Add the invitation table and runtime table-data RBAC; remove the secret-bearing storage connection-string output
+- [x] Replace the placeholder identity-proofing flow with authenticated manager invitation approval
+- [x] Implement durable invitation records and atomic one-time token redemption
+- [x] Add invitation/session tables and runtime table-data RBAC; remove the secret-bearing storage connection-string output
 - [ ] Add approved personal-email delivery and secret-safe observability
-- [ ] Bind redemption to the pre-created user's tenant and immutable object ID
-- [ ] Add group-scoped TAP creation and tenant-passkey registration
-- [ ] Add focused tests for the corrected flow
-- [ ] Disable credential issuance, presentation, and callbacks behind a future-extension flag
+- [x] Bind redemption to the pre-created user's tenant and immutable object ID
+- [x] Add group-scoped TAP creation and tenant-passkey registration
+- [x] Add focused tests for the corrected flow
+- [x] Disable credential issuance, presentation, and callbacks behind a future-extension production gate
 - [ ] Approve the Power Platform environment, capacity, licensing, and site bootstrap inputs
 - [ ] Author original Power Pages frontend content and its deployment profile
 - [ ] Add the protected Power Pages preflight and deployment workflows
@@ -383,7 +382,18 @@ West US 2 service support and the applicable regional quotas were checked read-o
 
 ## 10. Validation Proof
 
-Not applicable during Phase 1. This section must be populated by `azure-validate` after plan approval and before deployment.
+Local, non-mutating validation completed on 2026-09-09:
+
+| Validation | Result |
+|------------|--------|
+| `npm test` | 20/20 tests passed, including fragment activation, token-free route contracts, concurrent one-time redemption, pre-TAP pilot revalidation, durable sessions, fail-closed startup, and infrastructure contracts |
+| `node --check` | All changed application, route, service, browser, and test JavaScript parsed successfully |
+| `az bicep build --file infra/main.bicep` | Compiled successfully; only the two pre-existing unused-parameter warnings remain |
+| ARM and script parsing | `azuredeploy.json` parsed as JSON; changed PowerShell scripts parsed successfully |
+| RBAC inspection | Compiled Bicep and ARM each contain two `Storage Table Data Contributor` assignments scoped separately to the invitation and session tables |
+| Local smoke test | Demo-mode `/health` returned 200 and `/onboarding/demo` returned a fragment-bearing, token-free-request invitation redirect |
+
+No Azure deployment, tenant mutation, secret creation, `azure-validate`, or infrastructure what-if was performed. Those cloud-side checks remain required before deployment.
 
 ---
 
@@ -392,11 +402,11 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | File | Purpose | Status |
 |------|---------|--------|
 | `.azure/deployment-plan.md` | Deployment source of truth | Approved; implementation gates documented |
-| `infra/main.bicep` | Existing infrastructure source | Planned invitation-state and runtime-RBAC wiring |
-| `infra/modules/storage.bicep` | Existing storage module | Planned invitation table; remove secret-bearing connection-string output |
-| `azuredeploy.json` | Existing evaluation-only fallback | No change planned |
-| `.github/workflows/deploy-infrastructure.yml` | Existing what-if/apply workflow | No change planned |
-| `.github/workflows/deploy.yml` | Existing image delivery workflow | No change planned |
+| `infra/main.bicep` | Existing infrastructure source | Durable state, pilot-group input, and runtime-RBAC wiring implemented |
+| `infra/modules/storage.bicep` | Existing storage module | Invitation/session tables and managed-identity data role implemented |
+| `azuredeploy.json` | Existing evaluation-only fallback | Aligned with non-demo defaults and durable table state |
+| `.github/workflows/deploy-infrastructure.yml` | Existing what-if/apply workflow | Requires pilot-group input and explicitly disables demo mode |
+| `.github/workflows/deploy.yml` | Existing image delivery workflow | Explicitly disables demo mode and passes pilot/durable-state settings |
 | `.github/workflows/power-pages-preflight.yml` | Future non-mutating environment inventory and human address-check gate | Planned; not created |
 | `.github/workflows/power-pages-deploy.yml` | Future protected Power Pages website-configuration deployment | Planned; not created |
 | `power-pages/site/` | Future original portal source and deployment profiles | Planned; no external reference content may be copied |
@@ -411,9 +421,9 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | Private registry with managed-identity pull | `infra/modules/container-registry.bicep`, `.github/workflows/deploy.yml`, `scripts/07-bootstrap-github-actions-uami.ps1` |
 | Real image arrives after infrastructure | `README.md`, `azuredeploy.json`, `.github/workflows/deploy.yml` |
 | Runtime and deployment identities are separate | `infra/modules/user-assigned-identity.bicep`, `scripts/07-bootstrap-github-actions-uami.ps1`, `scripts/08-grant-app-uami-graph-permissions.ps1` |
-| Current state is in memory | `src/app.js`, `src/routes/issuance.js`, `src/routes/verification.js` |
-| Current onboarding accepts user-entered identity fields | `src/routes/onboarding.js` |
-| Current manager approval is an external placeholder | `src/services/identitypass-service.js`, `src/routes/identitypass.js` |
+| Invitation/session state is durable | `src/services/invitation-service.js`, `src/services/table-session-store.js`, `infra/modules/storage.bicep` |
+| Browser cannot select the Entra account | `src/routes/invitations.js`, `src/routes/onboarding.js`, `src/services/graph-service.js` |
+| Fragment activation avoids token-bearing request URLs | `src/public/js/invitation.js`, `src/routes/onboarding.js` |
 | Managed portal is a separate frontend | No existing dependency, parameter, resource, workflow, or portal source is present in the repository |
 | Power Pages website configuration supports GitHub Actions delivery | Official ALM documentation lists website upload actions, deployment profiles, and CLI upload/list/download commands |
 | Initial site URL remains a controlled bootstrap | The current generally available CLI reference lacks a documented create-site or read-only global URL availability command |
@@ -423,4 +433,4 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 
 ## 13. Next Step
 
-Provide the pilot user, manager approver scope, pilot policy group, invitation policy, and email-delivery choice. Then implement the durable one-time invitation flow, group-scoped TAP/passkey path, and original portal frontend. After the protected workflows and content are ready, update this plan to `Ready for Validation` and invoke `azure-validate` before any deployment.
+Provide the pilot user, manager approver scope, exact pilot policy group object ID, invitation policy, and approved email-delivery choice. Confirm the runtime Graph app roles and group-scoped TAP/FIDO2 policy, then run `azure-validate` and infrastructure what-if before any deployment. The future Verified ID mode remains blocked until callback state is durable.

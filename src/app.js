@@ -15,6 +15,7 @@ const invitationsRouter = require('./routes/invitations');
 const verificationRouter = require('./routes/verification');
 const passkeyRouter = require('./routes/passkey');
 const verifiedIdService = require('./services/verified-id-service');
+const { createSessionStore } = require('./services/table-session-store');
 
 function isUnsafeSecret(value) {
   return !value ||
@@ -25,6 +26,8 @@ function isUnsafeSecret(value) {
 if (!['invitation', 'verified-id'].includes(config.assurance.mode)) {
   throw new Error('ASSURANCE_MODE must be invitation or verified-id.');
 }
+
+config.validateRuntimeConfiguration();
 
 if (config.nodeEnv === 'production') {
   if (isUnsafeSecret(config.sessionSecret)) {
@@ -47,10 +50,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
 morgan.token('safe-url', (req) =>
-  req.originalUrl.replace(
-    /\/onboarding\/invite\/[^/?]+/,
-    '/onboarding/invite/[redacted]'
-  )
+  req.path
 );
 const logFormat = config.nodeEnv === 'production'
   ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":user-agent"'
@@ -63,13 +63,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(
   session({
     secret: config.sessionSecret,
+    store: createSessionStore(),
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: config.nodeEnv === 'production',
       httpOnly: true,
       maxAge: 60 * 60 * 1000,
-      sameSite: 'lax',
+      sameSite: 'strict',
     },
   })
 );
@@ -114,11 +115,13 @@ app.use((err, req, res, next) => {
 });
 
 const port = config.port;
-app.listen(port, () => {
-  console.log(`\nEntra Verified ID Onboarding Portal`);
-  console.log(`   Listening on http://localhost:${port}`);
-  console.log(`   Demo mode: ${config.demoMode ? 'ON' : 'OFF'}`);
-  console.log(`   Environment: ${config.nodeEnv}\n`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`\nEntra Verified ID Onboarding Portal`);
+    console.log(`   Listening on http://localhost:${port}`);
+    console.log(`   Demo mode: ${config.demoMode ? 'ON' : 'OFF'}`);
+    console.log(`   Environment: ${config.nodeEnv}\n`);
+  });
+}
 
 module.exports = app;

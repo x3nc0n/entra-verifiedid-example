@@ -34,14 +34,9 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const user = await graphService.getUserById(entraUserId);
-    if (!user ||
-        String(user.id).toLowerCase() !== String(entraUserId).toLowerCase() ||
-        user.accountEnabled === false) {
-      return res.status(404).json({ error: 'Active pre-created Entra user was not found.' });
-    }
+    const user = await graphService.getEligiblePilotUser(entraUserId);
 
-    const invitation = invitationService.createInvitation({
+    const invitation = await invitationService.createInvitation({
       entraUserId: user.id,
       userPrincipalName: user.userPrincipalName,
       displayName: user.displayName,
@@ -53,7 +48,7 @@ router.post('/', async (req, res) => {
     });
 
     return res.status(201).json({
-      invitationUrl: `${config.appBaseUrl}/onboarding/invite/${invitation.token}`,
+      invitationUrl: `${config.appBaseUrl}/onboarding/invite#token=${encodeURIComponent(invitation.token)}`,
       expiresAt: invitation.expiresAt,
       user: {
         id: invitation.entraUserId,
@@ -62,9 +57,17 @@ router.post('/', async (req, res) => {
       deliveryRequired: true,
     });
   } catch (err) {
-    const status = err instanceof invitationService.InvitationError ? 400 : 502;
+    const status = err instanceof invitationService.InvitationError
+      ? 400
+      : err instanceof graphService.PilotEligibilityError
+        ? 409
+        : 502;
     console.error('[invitations] Invitation creation failed:', err.message);
-    return res.status(status).json({ error: 'Failed to create onboarding invitation.' });
+    return res.status(status).json({
+      error: err instanceof graphService.PilotEligibilityError
+        ? 'The selected Entra user is not currently eligible for the pilot.'
+        : 'Failed to create onboarding invitation.',
+    });
   }
 });
 

@@ -37,8 +37,11 @@ param fido2RpId string = ''
 @description('FIDO2 allowed origin. Set after deployment via app settings.')
 param fido2Origin string = ''
 
+@description('Immutable object ID of the dedicated Entra pilot group. No tenant-wide default is permitted.')
+param pilotGroupId string
+
 @description('Enable demo mode (loosened auth for demo purposes).')
-param demoMode bool = true
+param demoMode bool = false
 
 @description('Azure Container Registry SKU for runtime images.')
 @allowed([
@@ -63,6 +66,7 @@ module storage 'modules/storage.bicep' = {
   params: {
     location: location
     appName: appName
+    appPrincipalId: appRuntimeIdentity.outputs.principalId
   }
 }
 
@@ -93,6 +97,7 @@ module containerApp 'modules/container-app.bicep' = {
     fido2RpName: fido2RpName
     fido2RpId: fido2RpId
     fido2Origin: fido2Origin
+    pilotGroupId: pilotGroupId
     demoMode: demoMode
     appInsightsConnectionString: monitoring.outputs.connectionString
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey
@@ -100,6 +105,9 @@ module containerApp 'modules/container-app.bicep' = {
     keyVaultUrl: keyVault.outputs.vaultUri
     appRuntimeManagedIdentityResourceId: appRuntimeIdentity.outputs.resourceId
     appRuntimeManagedIdentityClientId: appRuntimeIdentity.outputs.clientId
+    tableEndpoint: storage.outputs.tableEndpoint
+    invitationTableName: storage.outputs.invitationTableName
+    sessionTableName: storage.outputs.sessionTableName
   }
 }
 
@@ -138,6 +146,9 @@ output appInsightsKey string = monitoring.outputs.instrumentationKey
 
 @description('Storage account name.')
 output storageAccountName string = storage.outputs.accountName
+
+@description('Azure Table service endpoint used by the application.')
+output storageTableEndpoint string = storage.outputs.tableEndpoint
 
 @description('Azure Container Registry resource name.')
 output containerRegistryName string = containerRegistry.outputs.registryName

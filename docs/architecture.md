@@ -14,12 +14,15 @@ sequenceDiagram
     Manager->>Portal: POST /api/invitations<br/>immutable user object ID + known evidence
     Portal->>Graph: GET /v1.0/users/{object-id}
     Graph-->>Portal: Active user + directory UPN
-    Portal->>Portal: Generate 256-bit token<br/>store SHA-256 hash + expiry
-    Portal-->>Manager: One-time invitation URL
+    Portal->>Portal: Generate 256-bit token<br/>store SHA-256 hash + expiry in Azure Table
+    Portal-->>Manager: One-time fragment invitation URL
     Manager->>Mail: Deliver to known personal email
     Mail-->>User: Invitation URL
-    User->>Portal: Open invitation and enter known email + employee ID
-    Portal->>Portal: Hash/compare evidence<br/>atomic active -> consumed
+    User->>Portal: Open link; clear fragment<br/>POST token in HTTPS body
+    Portal->>Portal: Bind token digest to durable session
+    User->>Portal: Enter known email + employee ID
+    Portal->>Portal: Hash/compare evidence<br/>ETag active -> consumed
+    Portal->>Graph: Reload immutable object ID<br/>check accountEnabled + pilot group
     Portal->>Graph: POST temporaryAccessPassMethods<br/>single-use, short lifetime
     Graph-->>Portal: TAP value
     Portal-->>User: Display TAP once; no session/log persistence
@@ -36,9 +39,11 @@ sequenceDiagram
 |----------|---------|
 | Approval integration | `POST /api/invitations` requires a configured integration key. It is not a public manager UI. |
 | Account binding | The approval request supplies an immutable Entra object ID; the portal reads and stores the directory UPN from Graph. |
-| Invitation | 32 random bytes, base64url encoded; only SHA-256 hash stored. |
+| Invitation | 32 random bytes, base64url encoded; only SHA-256 hash stored. The bearer token is transported in a URL fragment and HTTPS body, never a route/query. |
 | Evidence | Personal email and employee ID are normalized, hashed, and compared without selecting an account in the browser. |
-| Consumption | Synchronous status transition from `active` to `consumed`; replay is rejected. |
+| State | Invitation and Express session state are stored in separate Azure Tables using managed identity. |
+| Consumption | ETag compare-and-set transitions `active` to `consumed`; concurrent replay is rejected. |
+| Pilot eligibility | Graph reloads the immutable object ID immediately before TAP creation and requires `accountEnabled=true` and transitive `PILOT_GROUP_ID` membership. |
 | TAP | Created after consumption, `isUsableOnce: true`, displayed once, never logged or stored in session. |
 | Passkey | Production options and credential submission use Microsoft Graph v1.0. Registration is confirmed by listing the user's FIDO2 methods. |
 
@@ -55,10 +60,11 @@ stateDiagram-v2
     locked --> [*]
 ```
 
-The current repository is intentionally in-memory because the surrounding portal
-already uses in-memory sessions and callback state. This is acceptable only for a
-single always-on replica pilot. A production repository must implement transactional
-compare-and-set semantics in a durable store.
+The live invitation backend uses Azure Table Storage. Each update supplies the
+entity ETag, so only one worker can consume an active invitation. Express sessions
+use a second table and hash session IDs before using them as row keys. The runtime
+user-assigned managed identity authenticates with `DefaultAzureCredential`; no
+storage account key or connection string is used.
 
 ## Passkey registration
 
@@ -92,7 +98,8 @@ evidence. After invitation consumption:
 5. Only then is the TAP created.
 
 No provider initiation endpoint, issuance payload, claim name, or signing scheme
-is assumed by this repository.
+is assumed by this repository. Production startup currently blocks this mode
+until its callback correlation state is moved from process memory to durable storage.
 
 ## Azure components
 
@@ -101,7 +108,10 @@ is assumed by this repository.
   Verified ID Request Service APIs through `DefaultAzureCredential`.
 - Azure Container Registry stores the application image.
 - Key Vault is the intended source for session and approval integration secrets.
+- Azure Table Storage holds invitations and Express sessions. The runtime UAMI
+  receives `Storage Table Data Contributor` separately on those two tables.
 - GitHub Actions uses a separate OIDC deployment identity.
 
-The invitation approval key and single always-on replica requirement still require an
-infrastructure-owner handoff before live deployment.
+The pilot group, manager approval integration, invitation delivery provider,
+Graph app roles, and authentication-method policy still require an
+infrastructure/security-owner handoff before live deployment.

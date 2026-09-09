@@ -7,6 +7,14 @@ const config = require('../config');
 
 let credential = null;
 
+class PilotEligibilityError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = 'PilotEligibilityError';
+    this.code = code;
+  }
+}
+
 function getCredential() {
   if (!credential) {
     credential = new DefaultAzureCredential({
@@ -20,6 +28,10 @@ async function getAccessToken() {
   if (config.demoMode) return 'demo-graph-token';
   const tokenResponse = await getCredential().getToken(config.graph.scope);
   return tokenResponse.token;
+}
+
+function authorizationHeaders(accessToken) {
+  return { Authorization: ['Bearer', accessToken].join(' ') };
 }
 
 async function getUserByPrincipalName(userPrincipalName) {
@@ -75,6 +87,52 @@ async function getUserById(userId) {
   }
 }
 
+async function isUserInGroup(userId, groupId) {
+  if (config.demoMode) return true;
+
+  const token = await getAccessToken();
+  const encodedUser = encodeURIComponent(userId);
+  const response = await axios.post(
+    `${config.graph.baseUrl}/v1.0/users/${encodedUser}/checkMemberGroups`,
+    { groupIds: [groupId] },
+    {
+      headers: {
+        ...authorizationHeaders(token),
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+  return (response.data.value || [])
+    .some((value) => String(value).toLowerCase() === String(groupId).toLowerCase());
+}
+
+async function getEligiblePilotUser(userId, dependencies = {}) {
+  const loadUser = dependencies.getUserById || getUserById;
+  const checkMembership = dependencies.isUserInGroup || isUserInGroup;
+  const groupId = dependencies.pilotGroupId || config.graph.pilotGroupId;
+  const user = await loadUser(userId);
+
+  if (!user || String(user.id).toLowerCase() !== String(userId).toLowerCase()) {
+    throw new PilotEligibilityError(
+      'The invitation-bound Entra account no longer exists.',
+      'user_not_found'
+    );
+  }
+  if (user.accountEnabled !== true) {
+    throw new PilotEligibilityError(
+      'The invitation-bound Entra account is disabled.',
+      'account_disabled'
+    );
+  }
+  if (!config.demoMode && (!groupId || !await checkMembership(user.id, groupId))) {
+    throw new PilotEligibilityError(
+      'The invitation-bound Entra account is not a current member of the configured pilot group.',
+      'pilot_group_required'
+    );
+  }
+  return user;
+}
+
 async function createTemporaryAccessPass(userId) {
   const lifetimeInMinutes = config.graph.tapLifetimeMinutes;
   if (lifetimeInMinutes < 10 || lifetimeInMinutes > 43200) {
@@ -107,6 +165,16 @@ async function createTemporaryAccessPass(userId) {
     }
   );
   return response.data;
+}
+
+async function createTemporaryAccessPassForPilotUser(userId, dependencies = {}) {
+  const validateUser = dependencies.getEligiblePilotUser || getEligiblePilotUser;
+  const createTap = dependencies.createTemporaryAccessPass ||
+    createTemporaryAccessPass;
+
+  const user = await validateUser(userId);
+  const tap = await createTap(user.id);
+  return { user, tap };
 }
 
 async function getFido2CreationOptions(userId, userPrincipalName) {
@@ -208,9 +276,13 @@ module.exports = {
   getAccessToken,
   getUserByPrincipalName,
   getUserById,
+  isUserInGroup,
+  getEligiblePilotUser,
   createTemporaryAccessPass,
+  createTemporaryAccessPassForPilotUser,
   getFido2CreationOptions,
   registerFido2Key,
   listFido2Methods,
   buildFido2RegistrationPayload,
+  PilotEligibilityError,
 };

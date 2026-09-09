@@ -65,7 +65,9 @@ async function completePresentation(entry, credential) {
       entry.expectedUser,
       getValidationSettings()
     );
-    const tap = await graphService.createTemporaryAccessPass(entry.expectedUser.id);
+    const { tap } = await graphService.createTemporaryAccessPassForPilotUser(
+      entry.expectedUser.id
+    );
 
     entry.status = 'tap_created';
     entry.message = 'Identity matched and a one-time Temporary Access Pass was created.';
