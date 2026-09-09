@@ -220,8 +220,15 @@ through the ACR/GitHub Actions flow.
    deliberately do not create or overwrite secret values. The workflow maps
    them to `SESSION_SECRET` and `ONBOARDING_APPROVAL_API_KEY`; production
    startup rejects missing values and known placeholder values.
-2. Set the exact dedicated `PILOT_GROUP_ID`, confirm that TAP/FIDO2 policy is
-   scoped to it, and grant the runtime identity the required Graph application roles.
+2. Set the exact dedicated `PILOT_GROUP_ID` and confirm that TAP/FIDO2 policy is
+   scoped to it. Before the first production pilot release, run
+   `scripts/08-grant-app-uami-graph-permissions.ps1` (or run `bootstrap.ps1`
+   with `-GrantRuntimeManagedIdentityGraphPermissions`) as an appropriately
+   privileged Entra operator. The runtime UAMI must have exactly the Graph
+   application roles used by this flow: `User.Read.All`,
+   `GroupMember.Read.All`, and `UserAuthenticationMethod.ReadWrite.All`.
+   `GroupMember.Read.All` is required for the final `checkMemberGroups`
+   revalidation immediately before TAP creation.
 3. Confirm the provisioned runtime identity has `Storage Table Data Contributor`
    only on the two dedicated onboarding tables.
 4. Connect the approval endpoint to an authenticated manager workflow.

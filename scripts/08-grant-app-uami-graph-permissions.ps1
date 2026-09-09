@@ -12,6 +12,7 @@
       - Grants the runtime UAMI the same app-role set used by the app runtime:
           * Microsoft Graph
             - User.Read.All
+            - GroupMember.Read.All
             - UserAuthenticationMethod.ReadWrite.All
           * Verified ID Request Service
             - VerifiableCredential.Create.IssueRequest
@@ -110,6 +111,7 @@ function Assert-ExplicitGuidParameter {
 $GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 $GRAPH_APP_ROLES = @(
     "User.Read.All"
+    "GroupMember.Read.All"
     "UserAuthenticationMethod.ReadWrite.All"
 )
 $VCS_REQUEST_APP_ID = "3db474b9-6a0c-4840-96ac-1fceb342124f"

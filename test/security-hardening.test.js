@@ -114,6 +114,52 @@ test('requires enabled account and current pilot group membership', async () => 
   );
 });
 
+test('grants the runtime UAMI only the Graph roles required by pilot onboarding', () => {
+  const permissionScript = fs.readFileSync(
+    path.join(
+      __dirname,
+      '..',
+      'scripts',
+      '08-grant-app-uami-graph-permissions.ps1'
+    ),
+    'utf8'
+  );
+  const bootstrapScript = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'bootstrap.ps1'),
+    'utf8'
+  );
+  const readme = fs.readFileSync(
+    path.join(__dirname, '..', 'README.md'),
+    'utf8'
+  );
+
+  const graphRolesBlock = permissionScript.match(
+    /\$GRAPH_APP_ROLES = @\(([\s\S]*?)\r?\n\)/
+  );
+  assert.ok(graphRolesBlock, 'Graph app-role list should be declared');
+  const graphRoles = [...graphRolesBlock[1].matchAll(/"([^"]+)"/g)]
+    .map((match) => match[1]);
+
+  assert.deepEqual(graphRoles, [
+    'User.Read.All',
+    'GroupMember.Read.All',
+    'UserAuthenticationMethod.ReadWrite.All',
+  ]);
+  assert.doesNotMatch(graphRolesBlock[1], /Directory\.Read\.All/);
+
+  const productionExample = bootstrapScript.match(
+    /# Production setup([\s\S]*?)\.EXAMPLE/
+  );
+  assert.ok(productionExample, 'Production bootstrap example should exist');
+  assert.match(
+    productionExample[1],
+    /-GrantRuntimeManagedIdentityGraphPermissions/
+  );
+  assert.match(readme, /Before the first production pilot release/);
+  assert.match(readme, /GroupMember\.Read\.All/);
+  assert.match(readme, /checkMemberGroups/);
+});
+
 test('persists shared Express sessions through the table client', async () => {
   const entities = new Map();
   const client = {

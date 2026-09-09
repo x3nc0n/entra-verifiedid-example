@@ -59,9 +59,10 @@
 
 .PARAMETER GrantRuntimeManagedIdentityGraphPermissions
     Explicitly opts into the post-deploy Microsoft Graph / Verified ID Request
-    Service app-role grant for the runtime app UAMI. This is an
-    admin-consent-equivalent directory change and is skipped unless this switch
-    is supplied.
+    Service app-role grant for the runtime app UAMI. The Graph grant includes
+    User.Read.All, GroupMember.Read.All, and
+    UserAuthenticationMethod.ReadWrite.All. This is an admin-consent-equivalent
+    directory change and is skipped unless this switch is supplied.
 
 .EXAMPLE
     # Full demo setup without real tenant/subscription IDs
@@ -74,7 +75,8 @@
                     -ResourceGroupName "rg-entra-verifiedid-prod" `
                     -AppName "contoso-vid" `
                     -Location "centralus" `
-                    -AppBaseUrl "https://contoso-vid-app.<env-hash>.centralus.azurecontainerapps.io"
+                    -AppBaseUrl "https://contoso-vid-app.<env-hash>.centralus.azurecontainerapps.io" `
+                    -GrantRuntimeManagedIdentityGraphPermissions
 
 .EXAMPLE
     # Dry run — preview all changes without applying them
