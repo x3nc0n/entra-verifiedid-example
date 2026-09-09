@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Approved for implementation and validation; cloud deployment is gated on the live-flow corrections below
+> **Status:** Approved for implementation and validation; cloud deployment and the conditional Power Pages bootstrap remain gated on the prerequisites below
 
 Generated: 2026-09-09
 
@@ -8,7 +8,7 @@ Generated: 2026-09-09
 
 ## 1. Project Overview
 
-**Goal:** Deploy the existing employee and guest onboarding portal into the specified identity tenant and Azure subscription without changing the application's established delivery architecture.
+**Goal:** Deploy the existing employee and guest onboarding application into the specified identity tenant and Azure subscription, with an optional Power Pages onboarding surface whose versioned configuration is delivered through GitHub Actions.
 
 **Path:** Modify an existing Azure-enabled application.
 
@@ -42,7 +42,7 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 | Location | West US 2 |
 | Data residency or compliance | Not supplied |
 | Live identity verification | Required |
-| Managed low-code portal | Out of scope for this deployment |
+| Managed low-code portal | Conditionally in scope after a controlled one-time bootstrap; ongoing configuration must deploy through GitHub Actions |
 | Public trusted domain | Not required if the proofing partner issues the presented credential; required only if this tenant also becomes an issuer |
 
 ### Approved proof-of-concept defaults
@@ -77,6 +77,7 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 | Infrastructure workflow | Delivery automation | Manual GitHub Actions workflow with what-if mode | `.github/workflows/deploy-infrastructure.yml` |
 | Application workflow | Delivery automation | OIDC login, registry build, container rollout, health check | `.github/workflows/deploy.yml` |
 | Tenant bootstrap | Administrative automation | PowerShell, Azure modules, directory modules | `scripts/01-*.ps1` through `scripts/08-*.ps1`, `scripts/bootstrap.ps1` |
+| Managed portal | Planned separate frontend | Power Pages website configuration in a Dataverse environment | Not yet present; future source path must contain original project content only |
 
 ### Existing infrastructure
 
@@ -128,6 +129,8 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 | Cloud-resource access | System-assigned managed identity | Registry pull and Key Vault secret resolution |
 | Directory and credential APIs | User-assigned managed identity | Dedicated runtime identity; app roles granted separately |
 | CI/CD deployment | User-assigned managed identity with OIDC federation | Resource-group-scoped deployment identity |
+| Managed portal frontend | Power Pages | Separate user experience backed by the existing Container App APIs |
+| Managed portal ALM | Power Platform GitHub Actions and CLI | Upload versioned website configuration with a target deployment profile |
 
 ### Delivery chain
 
@@ -139,13 +142,17 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 6. Configure registry identity and Key Vault-backed runtime secrets after the container app exists.
 7. Update the container app to the immutable commit-tagged image.
 8. Verify `GET /health` over HTTPS.
+9. After the controlled Power Pages bootstrap is complete, deploy versioned website configuration through a protected GitHub Actions environment.
+10. Verify the managed portal resolves at its approved URL and can reach only the approved Container App API origin.
 
 ### Identity boundary
 
 - The system-assigned identity is for Azure resource access.
 - The runtime user-assigned identity is for directory and credential-service API calls.
 - The GitHub deployment identity is for infrastructure and application delivery.
+- The Power Platform deployment service principal is a separate Dataverse application user for website-configuration deployment.
 - Directory app-role consent is an explicit local administrator action and must not run in GitHub Actions.
+- Do not reuse the Azure resource deployment identity for Dataverse deployment unless the platform explicitly supports that authentication path and the identity is separately configured as an application user.
 
 ### Tenant-level services
 
@@ -197,59 +204,75 @@ This differs from the current application. The following corrections are mandato
 
 ---
 
-## 6. Deferred Managed Portal Assessment
+## 6. Managed Portal CI/CD Feasibility
 
 The current repository does **not** require a Power Apps, Power Pages, Dataverse, or other low-code environment. No repository dependency, deployment parameter, infrastructure resource, or script references one.
 
-The requested `forgetfulpotato` name and the separate managed portal are explicitly deferred.
+The managed portal is now conditionally in scope. It is feasible only as a distinct frontend whose source-controlled website configuration is deployed through GitHub Actions after a controlled one-time environment and site bootstrap.
 
-### If a separate managed portal is desired
+### Feasibility conclusion
 
-A comparable guided onboarding experience should be treated as a distinct product surface with an ordered checklist covering:
+- Official Power Platform GitHub Actions support uploading Power Pages website configuration to a target Dataverse environment.
+- The upload action accepts the environment URL, service-principal application ID, tenant ID, client secret, content path, deployment profile, and data-model version.
+- Power Platform CLI supports listing, downloading, and uploading Power Pages website configuration.
+- The current generally available CLI command reference does not document `pac pages create-site` or a read-only global website-address availability command. A release-plan entry describes future create/delete support, but the plan must not depend on a release-plan-only capability until it appears in the installed CLI and current command reference.
+- Therefore, Actions can own repeatable website-content delivery, but the first Dataverse environment, website host, activation, and `powerappsportals.com` address require a controlled bootstrap through authorized administration tooling.
+- The existing Express/EJS application cannot be uploaded to Power Pages as-is. The portal must be authored as a separate Power Pages frontend that calls the existing Container App APIs.
 
-1. Initial credential or invitation retrieval.
-2. Identity request and approval.
-3. Strong-authentication enrollment.
-4. Workstation or virtual-desktop setup.
-5. Mobile-device setup.
-6. Handoff to additional onboarding resources.
-7. Optional password setup where policy permits.
+This satisfies the CI/CD requirement only if "deployed through GitHub Actions" means all versioned portal content and configuration after one approved bootstrap. If the requirement means zero manual environment, site-host, activation, and URL bootstrap, the portal is not approval-ready with the currently documented generally available tooling.
 
-The existing Node.js portal currently covers items 2 and 3, plus credential issuance and presentation. It does not implement device setup, mobile setup, or a broader onboarding-resource hub.
+### Selected ALM model
 
-Adding a managed portal would require a separate design decision for:
+- Use a dedicated non-default Power Platform environment with a Dataverse database.
+- Use the enhanced website data model where available in both source and target environments.
+- Create one blank or approved starter site during the controlled bootstrap.
+- Store only original project website configuration under a future repository path such as `power-pages/site/`.
+- Use deployment profiles for environment-specific API origins, website IDs, and non-secret settings.
+- Use a protected GitHub environment and the official website upload action or an equivalent `pac pages upload` command.
+- Keep Dataverse tables, schema, flows, connection references, and environment variables in a solution because website upload alone does not migrate schema.
 
-- A dedicated non-default low-code environment.
-- Dataverse capacity and environment licensing.
-- Environment region and type.
-- Security group and authenticated/anonymous page boundaries.
-- Data ownership, retention, and table permissions.
-- Integration pattern with the existing Node.js API.
-- A site web address and, for production, a custom domain.
+### Safe `forgetfulpotato` availability workflow
 
-### Safe subdomain availability check
+The authoritative availability result comes from the Power Pages create-site or site-URL administration UI, not DNS and not `pac pages list`.
 
-First clarify whether `forgetfulpotato` means:
+1. A future `power-pages-preflight` workflow is started with `workflow_dispatch` input `requested_subdomain=forgetfulpotato`.
+2. The read-only job authenticates to the selected Dataverse environment, runs `pac pages list`, and confirms whether a project website already exists. This only inventories the environment; it does not prove global address availability.
+3. The workflow stops at a protected GitHub environment named for portal bootstrap and requires an authorized administrator's approval.
+4. The administrator opens the approved environment in Power Pages, starts creation of the selected blank or starter site, enters `forgetfulpotato` in the website-address field, and waits for the portal's availability validation.
+5. If the address is available, the administrator records the accepted candidate in the workflow approval evidence. The administrator does not select **Done** until a separate provisioning approval is granted.
+6. If the address is unavailable, the administrator cancels the wizard. The workflow ends with `fallback_required`; it must not append numbers, reserve another name, or choose a fallback automatically.
+7. The user selects the next candidate and reruns `workflow_dispatch`. GitHub Actions environment approval and explicit dispatch inputs provide the prompt/decision boundary; an unattended job must not invent a fallback.
+8. Only after explicit provisioning approval may the selected address be created. This planning task performs no availability probe, reservation, or provisioning.
 
-- the low-code **environment organization URL**, or
-- the managed **website address**.
+Changing an existing site's base URL is not an availability test because applying the change restarts the site, releases the old address, and changes user access.
 
-These are different names and are validated in different creation flows.
+### Future GitHub Actions deployment design
 
-For a website address, the safe check is:
+The future deployment workflow is intentionally not created during this planning-only task. Its approved design is:
 
-1. Sign in with an authorized maker or administrator.
-2. Select the intended dedicated environment.
-3. Start the create-site wizard and select a blank or starter layout.
-4. Enter `forgetfulpotato` in the web-address field and let the wizard validate it.
-5. Record only whether the name is accepted.
-6. Cancel before selecting **Done** so no site is provisioned.
+1. Trigger on reviewed changes under `power-pages/` and allow a manual dispatch.
+2. Use a protected GitHub environment with required reviewers and deployment concurrency.
+3. Authenticate with the dedicated Power Platform service principal and client secret stored as an environment secret.
+4. Validate the target environment URL and website record with `pac pages list`.
+5. Fail closed if the target website ID or approved site URL does not match the GitHub environment variables.
+6. Scan the portal source path before upload and reject copied external business-process content, reference-site URLs, brand attribution, or unapproved assets. Technical platform identifiers required for deployment are not user-facing attribution.
+7. Upload website configuration with the target deployment profile and enhanced data model.
+8. Import any required managed solution before the website upload so Dataverse schema, flows, connection references, and environment variables already exist.
+9. Sync or restart only through supported tooling when required, then verify the public URL and an application-specific health page.
+10. Never create, rename, delete, or select a fallback website in the routine content-deployment workflow.
 
-For an environment organization URL, start the new-environment flow, enter the proposed organization URL, let the admin center validate uniqueness, and cancel before **Save**.
+### GitHub Actions and Power Platform prerequisites
 
-Do not infer availability from DNS. Names can be reserved, recently released names can remain unavailable for at least 24 hours, and availability can depend on the selected environment and datacenter.
-
-Changing an existing environment URL is not an availability-testing mechanism: saving a change can disrupt flows, connections, embedded apps, bookmarks, and user access.
+1. A dedicated non-default Power Platform environment with a Dataverse database, environment type, geography, base language, currency, security group, capacity, and licensing explicitly approved. West US 2 must not be assumed to map to the Power Platform geography.
+2. An authorized Power Pages administrator or maker for the one-time site template, address, activation, visibility, and authentication bootstrap.
+3. A dedicated app registration and service principal for CI/CD.
+4. A Dataverse application user for that service principal in each target environment. The official setup path assigns the System Administrator role; any later least-privilege replacement must be proven to support website and solution deployment before reducing it.
+5. GitHub environment variables for the Dataverse environment URL, approved website ID, approved site URL, deployment profile, and data-model version.
+6. GitHub environment secrets for the Power Platform client ID, tenant ID, and client secret. Current official GitHub Actions authentication uses a client secret; repository secrets and personal-user credentials are not approved.
+7. Power Pages authenticated-user or pay-as-you-go capacity appropriate for the test, plus Dataverse database capacity.
+8. Exact authentication, CORS, API base URL, table-permission, web-role, and site-visibility decisions for the frontend-to-Container-App boundary.
+9. An original portal content baseline authored for this project. No external business-process data, copied wording, screenshots, logos, personal data, or attribution may be committed.
+10. A separately approved site bootstrap and address decision before any workflow can upload content.
 
 ---
 
@@ -269,6 +292,7 @@ West US 2 service support and the applicable regional quotas were checked read-o
 | User-assigned managed identity | 1 runtime identity | 1 planned | 80 create operations per 20 seconds per subscription/region | One creation is within the documented rate limit |
 | Deployment user-assigned identity | 1 | 1 planned | Same managed identity rate limit | Resource group and deployment identity do not currently exist |
 | Role assignments | At least 2 in Bicep, plus deployment/bootstrap assignments | Planned set only | Subscription/RG authorization limits not approached | Operator permission still must allow role-assignment writes |
+| Power Platform environment and Power Pages site | 1 environment and 1 site | Unknown until bootstrap | Separate licensing, Dataverse, and Power Pages capacity | Not an Azure regional quota; requires explicit geography, capacity, license, and site-address approval |
 
 **Quota status:** Within documented limits. A successful what-if does not guarantee transient Container Apps capacity, so actual provisioning still needs normal capacity-error recovery.
 
@@ -284,6 +308,10 @@ West US 2 service support and the applicable regional quotas were checked read-o
 6. **Claim matching:** define the minimum exact-match claims used to bind the presented credential to the tenant user.
 7. **Public URL:** use the generated Container App hostname for the proof-of-concept unless the identity-proofing provider requires a pre-registered custom callback domain.
 8. **Credential issuer decision:** confirm that the proofing partner issues the credential. If this tenant must issue its own credential, a trusted domain and signing-key setup become required.
+9. **Power Platform environment:** provide or approve the environment type, Power Platform geography, base language, currency, security group, Dataverse database, capacity, and licensing.
+10. **Power Pages bootstrap:** approve the site template, enhanced data model, authentication mode, site visibility, and one-time authorized address check for `forgetfulpotato`.
+11. **Portal CI/CD identity:** approve a dedicated app registration, Dataverse application user, GitHub environment, and client-secret lifecycle.
+12. **Frontend integration:** define the exact APIs exposed by the Container App, allowed portal origin, authentication token flow, table permissions, and web roles.
 
 ---
 
@@ -299,6 +327,9 @@ West US 2 service support and the applicable regional quotas were checked read-o
 - [x] Select the existing Bicep and container delivery recipe
 - [x] Inventory resources
 - [x] Assess optional managed portal applicability
+- [x] Confirm managed portal is conditionally in scope only with GitHub Actions ALM
+- [x] Design the non-mutating address-check and explicit fallback decision boundary
+- [x] Document Power Pages CI/CD feasibility and prerequisites
 - [x] Receive region, proof-of-concept, live-flow, and portal-scope decisions
 - [x] Validate regional quotas and documented limits
 - [x] Complete deployment architecture decisions
@@ -310,6 +341,11 @@ West US 2 service support and the applicable regional quotas were checked read-o
 - [ ] Correct the live identity-proofing, TAP, and tenant-passkey flow
 - [ ] Add focused tests for the corrected flow
 - [ ] Obtain the live provider contract and test credentials
+- [ ] Approve the Power Platform environment, capacity, licensing, and site bootstrap inputs
+- [ ] Author original Power Pages frontend content and its deployment profile
+- [ ] Add the protected Power Pages preflight and deployment workflows
+- [ ] Run the authorized `forgetfulpotato` availability check without provisioning
+- [ ] Receive explicit approval before creating the Power Pages site
 - [ ] Run `azure-validate`
 - [ ] Run infrastructure what-if
 - [ ] Provision approved infrastructure
@@ -336,6 +372,9 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | `azuredeploy.json` | Existing evaluation-only fallback | No change planned |
 | `.github/workflows/deploy-infrastructure.yml` | Existing what-if/apply workflow | No change planned |
 | `.github/workflows/deploy.yml` | Existing image delivery workflow | No change planned |
+| `.github/workflows/power-pages-preflight.yml` | Future non-mutating environment inventory and human address-check gate | Planned; not created |
+| `.github/workflows/power-pages-deploy.yml` | Future protected Power Pages website-configuration deployment | Planned; not created |
+| `power-pages/site/` | Future original portal source and deployment profiles | Planned; no external reference content may be copied |
 
 ---
 
@@ -348,11 +387,13 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | Real image arrives after infrastructure | `README.md`, `azuredeploy.json`, `.github/workflows/deploy.yml` |
 | Runtime and deployment identities are separate | `infra/modules/user-assigned-identity.bicep`, `scripts/07-bootstrap-github-actions-uami.ps1`, `scripts/08-grant-app-uami-graph-permissions.ps1` |
 | Current state is in memory | `src/app.js`, `src/routes/issuance.js`, `src/routes/verification.js` |
-| Low-code portal is not a deployment dependency | No matching dependency, parameter, resource, workflow, or script in the repository |
+| Managed portal is a separate frontend | No existing dependency, parameter, resource, workflow, or portal source is present in the repository |
+| Power Pages website configuration supports GitHub Actions delivery | Official ALM documentation lists website upload actions, deployment profiles, and CLI upload/list/download commands |
+| Initial site URL remains a controlled bootstrap | The current generally available CLI reference lacks a documented create-site or read-only global URL availability command |
 | Node.js runtime contract | `package.json`, `package-lock.json`, `Dockerfile`, `src/config.js` |
 
 ---
 
 ## 13. Next Step
 
-Correct and validate the live onboarding flow, obtain the provider contract and test user, then invoke `azure-validate` before any deployment.
+Approve the Power Platform environment and bootstrap prerequisites, then implement the live onboarding corrections and original portal frontend. After the future protected workflows and content are ready, update this plan to `Ready for Validation` and invoke `azure-validate` before any deployment.
