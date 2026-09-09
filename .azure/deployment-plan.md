@@ -35,15 +35,16 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 
 | Attribute | Value |
 |-----------|-------|
-| Classification | End-to-end proof of concept with live identity proofing |
+| Classification | End-to-end pilot with manager-approved invitations to known users |
 | Runtime scale | Small baseline: 0.5 vCPU, 1 GiB, zero to two replicas |
 | Budget posture | Cost-optimized baseline |
 | Subscription | Confirmed above |
 | Location | West US 2 |
 | Data residency or compliance | Not supplied |
-| Live identity verification | Required |
+| Pilot identity gate | Manager approval plus a one-time invitation sent to the known personal email of a pre-created tenant user |
 | Managed low-code portal | Conditionally in scope after a controlled one-time bootstrap; ongoing configuration must deploy through GitHub Actions |
-| Public trusted domain | Not required if the proofing partner issues the presented credential; required only if this tenant also becomes an issuer |
+| Verified credential integration | Future extension; not a pilot deployment gate |
+| Public trusted domain | Not required for the invitation pilot; required only if a future credential issuer is added |
 
 ### Approved proof-of-concept defaults
 
@@ -68,7 +69,8 @@ The local Azure CLI context matches the requested tenant, subscription, and oper
 | Component | Type | Technology | Path |
 |-----------|------|------------|------|
 | Portal UI and API | Server-rendered web application | Node.js 20, Express 4, EJS | `src/` |
-| Identity request and approval | Workflow integration | HTTP API, signed webhook callback, simulated mode | `src/services/identitypass-service.js`, `src/routes/identitypass.js` |
+| Legacy identity request and approval | Placeholder workflow integration | HTTP API, signed webhook callback, simulated mode | `src/services/identitypass-service.js`, `src/routes/identitypass.js` |
+| Pilot invitation approval | Planned backend workflow | Manager authorization, immutable user binding, opaque one-time token | Not yet implemented |
 | Credential issuance | API integration | Verified credential request service | `src/routes/issuance.js`, `src/services/verified-id-service.js` |
 | Credential presentation | API integration | Verified credential request service | `src/routes/verification.js`, `src/services/verified-id-service.js` |
 | Strong-auth registration | Browser and directory integration | WebAuthn/FIDO2 plus directory API | `src/routes/passkey.js`, `src/services/fido2-service.js`, `src/services/graph-service.js` |
@@ -124,10 +126,11 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 | Image storage and build | Container Registry | Basic SKU, admin credentials disabled |
 | Runtime secrets | Key Vault | Standard SKU, RBAC enabled, purge protection enabled |
 | Artifact storage | Storage account and private blob container | Standard locally redundant storage |
+| Invitation state | Storage account table service | Planned durable records with atomic one-time redemption and managed-identity access |
 | Central logs | Log Analytics workspace | 30-day retention |
 | Platform monitoring | Application Insights | Workspace-based |
 | Cloud-resource access | System-assigned managed identity | Registry pull and Key Vault secret resolution |
-| Directory and credential APIs | User-assigned managed identity | Dedicated runtime identity; app roles granted separately |
+| Directory APIs and future credential APIs | User-assigned managed identity | Dedicated runtime identity; app roles granted separately |
 | CI/CD deployment | User-assigned managed identity with OIDC federation | Resource-group-scoped deployment identity |
 | Managed portal frontend | Power Pages | Separate user experience backed by the existing Container App APIs |
 | Managed portal ALM | Power Platform GitHub Actions and CLI | Upload versioned website configuration with a target deployment profile |
@@ -137,7 +140,7 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 1. Deploy Bicep into a resource group. The first container revision is a public bootstrap placeholder.
 2. Create or verify the repository-bound deployment identity and federated credentials.
 3. Grant the container application's system identity registry pull access.
-4. Grant the runtime user-assigned identity only the directory and credential-service application roles required by the app.
+4. Grant the runtime user-assigned identity only the directory application roles required for the pilot. Credential-service roles remain disabled unless the future extension is approved.
 5. Build the real image in the private registry.
 6. Configure registry identity and Key Vault-backed runtime secrets after the container app exists.
 7. Update the container app to the immutable commit-tagged image.
@@ -148,7 +151,7 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 ### Identity boundary
 
 - The system-assigned identity is for Azure resource access.
-- The runtime user-assigned identity is for directory and credential-service API calls.
+- The runtime user-assigned identity is for directory API calls and, only if later approved, credential-service API calls.
 - The GitHub deployment identity is for infrastructure and application delivery.
 - The Power Platform deployment service principal is a separate Dataverse application user for website-configuration deployment.
 - Directory app-role consent is an explicit local administrator action and must not run in GitHub Actions.
@@ -158,49 +161,58 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 
 The following are not fully provisioned by the Bicep deployment and require separate, privileged setup after approval:
 
-- Credential-service authority and contract.
-- Public trusted-domain binding and directly reachable `/.well-known/did-configuration.json` with no redirect.
-- Runtime identity application-role assignments.
-- FIDO2 and temporary-access policy scope.
-- Live identity-proofing endpoint, key, callback secret, and manager routing.
+- Runtime identity directory application-role assignments.
+- Group-scoped FIDO2 and temporary-access policy.
+- Manager approver scope and pilot-user group.
+- Invitation delivery sender and personal-email handling policy.
 
-For advanced credential-service setup, the signing-key vault has a different permission-model requirement than the application's RBAC-enabled secret vault. Do not assume the application vault can also serve as the signing-key vault; confirm the tenant setup path and use a separate vault if required.
+Credential-service authority, contract, trusted-domain binding, and any signing-key vault are deferred future-extension requirements. If that extension is approved later, do not assume the application's RBAC-enabled secret vault can also serve as the signing-key vault.
 
 ### Known implementation constraints
 
 - `express-session` uses its default in-memory store.
 - Issuance and presentation callbacks are held in in-memory maps.
 - The storage account is provisioned but is not wired into application state.
-- The current architecture is therefore appropriate only for demo/POC use until durable state is implemented.
+- The current architecture is therefore appropriate only for demo use until invitation and onboarding state move to a durable store with atomic consume semantics.
 - The storage module exposes a primary-key connection string as a deployment output. The Bicep linter flags this as a possible secret-bearing output; it must not be propagated, logged, or adopted as the application access model.
+- The invitation implementation should add a table service/table and grant the runtime identity table-data access. It must use managed identity rather than the secret-bearing connection-string output.
 - `docs/architecture.md` still describes a legacy App Service/Cosmos shape. Use the Bicep, ARM template, workflows, and current README as deployment evidence instead.
 - The tenant bootstrap script performs multiple cloud and directory mutations. It must not be used as a single unattended command before each mutation and scope are reviewed.
 - The FIDO2/TAP script refuses implicit tenant-wide rollout unless an explicit override is passed. Dedicated onboarding groups are the safer default.
 - The credential setup script requires a real trusted domain. A generated container hostname or managed portal hostname must not be assumed suitable until it can serve the exact well-known file over HTTPS without redirects.
 
-### Required live onboarding sequence
+### Required pilot onboarding sequence
 
 The approved end-to-end proof-of-concept sequence is:
 
-1. A pre-created tenant user receives a short-lived, user-specific onboarding link.
-2. The identity-proofing partner verifies the person and issues a partner-backed Verified ID.
-3. The portal requests presentation of that Verified ID.
-4. The portal validates the presentation, matches its claims to the pre-created tenant user, and records the audit result.
-5. The portal creates a Temporary Access Pass for that tenant user through the directory API.
-6. The TAP is shown once through a protected handoff.
-7. The user signs in with the TAP and registers a tenant passkey.
-8. The portal confirms the tenant authentication method exists and marks onboarding complete.
+1. A tenant user account is pre-created and placed in the dedicated pilot group.
+2. An authorized manager selects that exact directory user and confirms the known personal email delivery address.
+3. The backend creates an invitation record whose tenant ID and user object ID are immutable. The personal email is a delivery attribute, never the lookup key used during redemption; if retained, it is encrypted at rest and removed when no longer required.
+4. Only after manager approval, the backend generates an opaque token with at least 256 bits of cryptographic randomness, stores only its SHA-256 digest, assigns a short expiration, and sends the one-time link to the approved personal email.
+5. The one-time link carries the token in the URL fragment. The Power Pages frontend posts it directly to the Container App over HTTPS, immediately clears the fragment, and does not write the token to Dataverse, analytics, telemetry, page content, local storage, or session storage.
+6. The backend atomically consumes the token, rejects replay or expiry, reloads the bound user by immutable object ID, and confirms the account remains enabled and in the pilot group.
+7. The backend creates a one-time Temporary Access Pass for that bound tenant user through the directory API.
+8. The TAP is returned once with no-store headers and rendered transiently. It is never written to Power Pages or Dataverse data, logs, analytics, telemetry, durable invitation records, or callback payloads.
+9. The user signs in with the TAP and registers a tenant passkey.
+10. The backend confirms the tenant authentication method exists and records only non-secret completion and audit metadata.
 
 This differs from the current application. The following corrections are mandatory before live deployment:
 
-- Replace the placeholder identity-proofing `/requests` contract with an actual approved provider contract. The configured `https://identitypass.microsoft.com/api/v1` endpoint returns only a product label, and no public request, status, authentication, or callback contract was found. It must not be treated as a callable tenant service.
-- Consume and verify a partner-issued credential instead of issuing a new employee credential before proofing.
-- Add tenant-user matching and TAP creation.
+- Replace the self-service onboarding form and placeholder external approval request with an authenticated manager-only invitation workflow.
+- Bind every invitation to the pre-created user's tenant ID and immutable directory object ID before generating a token. Redemption must never resolve a user from submitted email, employee ID, UPN, or credential claims.
+- Generate opaque tokens with at least 256 bits of cryptographic randomness, store only a SHA-256 digest, set a short configurable lifetime, and consume them once through an atomic compare-and-set operation.
+- Add rate limiting, generic redemption failures, replay protection, audit events, and redaction for invitation paths and request bodies.
+- Add TAP creation only after successful invitation redemption and pilot-group revalidation.
 - Retrieve passkey `creationOptions` from the directory API; do not generate an application-domain WebAuthn challenge and submit it as a tenant passkey.
 - Complete passkey registration with the directory API and verify the created authentication method.
-- Validate all credential-service callback authentication rather than accepting the current hard-coded callback header without server-side enforcement.
 - Use least-privilege TAP and passkey application permissions for the runtime identity.
 - Add a protected, one-time TAP display and avoid logging or persisting the TAP value.
+- Scope TAP and FIDO2 policy to the dedicated pilot group; tenant-wide enablement is not approved.
+- Keep the existing credential issuance, presentation, and callback code disabled behind a future-extension flag. If re-enabled later, callback authentication and payload minimization require a separate review.
+
+### Future Verified ID extension
+
+Third-party identity verification and credential presentation remain a future extension, not a pilot prerequisite. The extension may insert a credential-presentation check between invitation redemption and TAP creation, but it must preserve the immutable pre-created user binding. A presented credential can corroborate the invitation; it must not select or replace the bound tenant user.
 
 ---
 
@@ -230,6 +242,8 @@ This satisfies the CI/CD requirement only if "deployed through GitHub Actions" m
 - Use deployment profiles for environment-specific API origins, website IDs, and non-secret settings.
 - Use a protected GitHub environment and the official website upload action or an equivalent `pac pages upload` command.
 - Keep Dataverse tables, schema, flows, connection references, and environment variables in a solution because website upload alone does not migrate schema.
+- Keep invitation secrets, personal-email values, TAP values, credential callbacks, and callback payloads out of portal configuration and Dataverse tables. The Container App owns the invitation, TAP, passkey, and future credential workflows.
+- Use Power Pages only for the manager/user experience and transient API rendering. Portal persistence is limited to non-secret site configuration and explicitly approved non-sensitive status data.
 
 ### Safe `forgetfulpotato` availability workflow
 
@@ -258,8 +272,9 @@ The future deployment workflow is intentionally not created during this planning
 6. Scan the portal source path before upload and reject copied external business-process content, reference-site URLs, brand attribution, or unapproved assets. Technical platform identifiers required for deployment are not user-facing attribution.
 7. Upload website configuration with the target deployment profile and enhanced data model.
 8. Import any required managed solution before the website upload so Dataverse schema, flows, connection references, and environment variables already exist.
-9. Sync or restart only through supported tooling when required, then verify the public URL and an application-specific health page.
-10. Never create, rename, delete, or select a fallback website in the routine content-deployment workflow.
+9. Reject portal source or solution changes that add columns, logging, analytics, flows, or connection mappings for invitation tokens, token digests, personal email, TAP values, or callback bodies.
+10. Sync or restart only through supported tooling when required, then verify the public URL and an application-specific health page.
+11. Never create, rename, delete, or select a fallback website in the routine content-deployment workflow.
 
 ### GitHub Actions and Power Platform prerequisites
 
@@ -270,9 +285,10 @@ The future deployment workflow is intentionally not created during this planning
 5. GitHub environment variables for the Dataverse environment URL, approved website ID, approved site URL, deployment profile, and data-model version.
 6. GitHub environment secrets for the Power Platform client ID, tenant ID, and client secret. Current official GitHub Actions authentication uses a client secret; repository secrets and personal-user credentials are not approved.
 7. Power Pages authenticated-user or pay-as-you-go capacity appropriate for the test, plus Dataverse database capacity.
-8. Exact authentication, CORS, API base URL, table-permission, web-role, and site-visibility decisions for the frontend-to-Container-App boundary.
+8. Exact authentication, CORS, API base URL, manager web-role, user invitation page, table-permission, and site-visibility decisions for the frontend-to-Container-App boundary.
 9. An original portal content baseline authored for this project. No external business-process data, copied wording, screenshots, logos, personal data, or attribution may be committed.
 10. A separately approved site bootstrap and address decision before any workflow can upload content.
+11. A portal data classification that explicitly prohibits invitation tokens, token digests, personal email, TAP values, and credential callback bodies in Dataverse, flows, analytics, or portal telemetry.
 
 ---
 
@@ -300,18 +316,19 @@ West US 2 service support and the applicable regional quotas were checked read-o
 
 ## 8. Required Inputs Before Live End-to-End Testing
 
-1. **Identity-proofing provider contract:** select a generally available identity-verification provider that can issue or support issuance of the credential, then provide the real endpoint, authentication method, request/response schema, callback-signing rules, and test credentials through an approved secret channel. The repository's default IdentityPass URL is not an actionable API contract.
-2. **Test tenant user:** provide an existing non-production user UPN whose HR/proofing claims can be matched. The account must be pre-created before the flow starts.
-3. **TAP/FIDO2 pilot scope:** provide or approve creation of a dedicated pilot group containing only the test user.
-4. **Administrative operators:** confirm access to an Authentication Policy Administrator for policy changes and an Authentication Administrator or equivalent application-permission grant path for TAP/passkey operations.
-5. **TAP policy:** use one-time, 60-minute TAP for the first test unless the test includes device enrollment likely to exceed the ten-minute post-sign-in authentication-method registration window.
-6. **Claim matching:** define the minimum exact-match claims used to bind the presented credential to the tenant user.
-7. **Public URL:** use the generated Container App hostname for the proof-of-concept unless the identity-proofing provider requires a pre-registered custom callback domain.
-8. **Credential issuer decision:** confirm that the proofing partner issues the credential. If this tenant must issue its own credential, a trusted domain and signing-key setup become required.
+1. **Pilot tenant user:** provide the pre-created non-production user's tenant ID, immutable directory object ID, display UPN, and known personal email delivery address.
+2. **Manager approvers:** provide a dedicated manager-approver group or explicit approver object IDs. Only authenticated members of this scope may approve and issue invitations.
+3. **Pilot policy group:** provide or approve creation of a dedicated group containing only pilot users. TAP and FIDO2 policies must target this group, not all users.
+4. **Invitation policy:** approve the short token lifetime, maximum outstanding invitations per user, resend/reissue behavior, approval expiry, and failure-lockout thresholds.
+5. **Invitation delivery:** select an approved outbound email service and sender identity for delivery to personal email. The current repository has no real email-delivery implementation.
+6. **Administrative operators:** confirm access to configure group-scoped authentication policies and grant the runtime application's TAP/passkey permissions.
+7. **TAP policy:** use a one-time TAP with an approved lifetime for the pilot and define the reissue path if the first TAP expires or is lost.
+8. **Passkey experience:** confirm whether the user registers through the tenant security-information experience or an application-embedded flow using directory-provided creation options.
 9. **Power Platform environment:** provide or approve the environment type, Power Platform geography, base language, currency, security group, Dataverse database, capacity, and licensing.
 10. **Power Pages bootstrap:** approve the site template, enhanced data model, authentication mode, site visibility, and one-time authorized address check for `forgetfulpotato`.
 11. **Portal CI/CD identity:** approve a dedicated app registration, Dataverse application user, GitHub environment, and client-secret lifecycle.
-12. **Frontend integration:** define the exact APIs exposed by the Container App, allowed portal origin, authentication token flow, table permissions, and web roles.
+12. **Frontend integration:** define the manager and invitee authentication flows, exact Container App APIs, allowed portal origin, web roles, table permissions, and non-sensitive status data.
+13. **Future Verified ID extension:** keep credential issuance, presentation, and callbacks disabled for the pilot. Provider selection, trusted domain, credential contract, and callback authentication are deferred to a separately approved phase.
 
 ---
 
@@ -330,6 +347,8 @@ West US 2 service support and the applicable regional quotas were checked read-o
 - [x] Confirm managed portal is conditionally in scope only with GitHub Actions ALM
 - [x] Design the non-mutating address-check and explicit fallback decision boundary
 - [x] Document Power Pages CI/CD feasibility and prerequisites
+- [x] Replace the third-party proofing gate with manager-approved one-time invitations
+- [x] Define immutable user binding, opaque-token, portal-data, and group-scope requirements
 - [x] Receive region, proof-of-concept, live-flow, and portal-scope decisions
 - [x] Validate regional quotas and documented limits
 - [x] Complete deployment architecture decisions
@@ -338,9 +357,14 @@ West US 2 service support and the applicable regional quotas were checked read-o
 ### Phase 2: Implementation and validation
 
 - [x] Research and confirm service-specific requirements for the selected region
-- [ ] Correct the live identity-proofing, TAP, and tenant-passkey flow
+- [ ] Replace the placeholder identity-proofing flow with authenticated manager invitation approval
+- [ ] Implement durable invitation records and atomic one-time token redemption
+- [ ] Add the invitation table and runtime table-data RBAC; remove the secret-bearing storage connection-string output
+- [ ] Add approved personal-email delivery and secret-safe observability
+- [ ] Bind redemption to the pre-created user's tenant and immutable object ID
+- [ ] Add group-scoped TAP creation and tenant-passkey registration
 - [ ] Add focused tests for the corrected flow
-- [ ] Obtain the live provider contract and test credentials
+- [ ] Disable credential issuance, presentation, and callbacks behind a future-extension flag
 - [ ] Approve the Power Platform environment, capacity, licensing, and site bootstrap inputs
 - [ ] Author original Power Pages frontend content and its deployment profile
 - [ ] Add the protected Power Pages preflight and deployment workflows
@@ -368,7 +392,8 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | File | Purpose | Status |
 |------|---------|--------|
 | `.azure/deployment-plan.md` | Deployment source of truth | Approved; implementation gates documented |
-| `infra/main.bicep` | Existing infrastructure source | No change planned |
+| `infra/main.bicep` | Existing infrastructure source | Planned invitation-state and runtime-RBAC wiring |
+| `infra/modules/storage.bicep` | Existing storage module | Planned invitation table; remove secret-bearing connection-string output |
 | `azuredeploy.json` | Existing evaluation-only fallback | No change planned |
 | `.github/workflows/deploy-infrastructure.yml` | Existing what-if/apply workflow | No change planned |
 | `.github/workflows/deploy.yml` | Existing image delivery workflow | No change planned |
@@ -387,6 +412,8 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 | Real image arrives after infrastructure | `README.md`, `azuredeploy.json`, `.github/workflows/deploy.yml` |
 | Runtime and deployment identities are separate | `infra/modules/user-assigned-identity.bicep`, `scripts/07-bootstrap-github-actions-uami.ps1`, `scripts/08-grant-app-uami-graph-permissions.ps1` |
 | Current state is in memory | `src/app.js`, `src/routes/issuance.js`, `src/routes/verification.js` |
+| Current onboarding accepts user-entered identity fields | `src/routes/onboarding.js` |
+| Current manager approval is an external placeholder | `src/services/identitypass-service.js`, `src/routes/identitypass.js` |
 | Managed portal is a separate frontend | No existing dependency, parameter, resource, workflow, or portal source is present in the repository |
 | Power Pages website configuration supports GitHub Actions delivery | Official ALM documentation lists website upload actions, deployment profiles, and CLI upload/list/download commands |
 | Initial site URL remains a controlled bootstrap | The current generally available CLI reference lacks a documented create-site or read-only global URL availability command |
@@ -396,4 +423,4 @@ Not applicable during Phase 1. This section must be populated by `azure-validate
 
 ## 13. Next Step
 
-Approve the Power Platform environment and bootstrap prerequisites, then implement the live onboarding corrections and original portal frontend. After the future protected workflows and content are ready, update this plan to `Ready for Validation` and invoke `azure-validate` before any deployment.
+Provide the pilot user, manager approver scope, pilot policy group, invitation policy, and email-delivery choice. Then implement the durable one-time invitation flow, group-scoped TAP/passkey path, and original portal frontend. After the protected workflows and content are ready, update this plan to `Ready for Validation` and invoke `azure-validate` before any deployment.
