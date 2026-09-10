@@ -240,6 +240,9 @@ through the ACR/GitHub Actions flow.
    matching rules.
 
 See [`docs/architecture.md`](docs/architecture.md) and [SECURITY.md](SECURITY.md).
+For role-based step-by-step guides (Admin, Manager, User) covering both the
+onboarding and account recovery flows, see
+[`docs/job-aids.md`](docs/job-aids.md).
 
 ## License
 
