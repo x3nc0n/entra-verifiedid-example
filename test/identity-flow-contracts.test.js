@@ -65,6 +65,36 @@ test('requires a newly registered FIDO2 method after invitation consumption', ()
   assert.equal(findNewFido2Method(methods, ['existing-method', 'new-method']), null);
 });
 
+test('revokes every existing FIDO2 method for a user recovering a lost authenticator', async () => {
+  const methods = [{ id: 'lost-method-one' }, { id: 'lost-method-two' }];
+  const deleted = [];
+
+  const revokedMethodIds = await graphService.revokeAllFido2Methods('user-id', {
+    listFido2Methods: async () => methods,
+    deleteFido2Method: async (userId, methodId) => {
+      deleted.push({ userId, methodId });
+      return { deleted: true, id: methodId };
+    },
+  });
+
+  assert.deepEqual(revokedMethodIds, ['lost-method-one', 'lost-method-two']);
+  assert.deepEqual(deleted, [
+    { userId: 'user-id', methodId: 'lost-method-one' },
+    { userId: 'user-id', methodId: 'lost-method-two' },
+  ]);
+});
+
+test('revoking FIDO2 methods for a user with none registered is a no-op', async () => {
+  const revokedMethodIds = await graphService.revokeAllFido2Methods('user-id', {
+    listFido2Methods: async () => [],
+    deleteFido2Method: async () => {
+      throw new Error('deleteFido2Method should not be called when there are no methods.');
+    },
+  });
+
+  assert.deepEqual(revokedMethodIds, []);
+});
+
 test('deduplicates concurrent TAP creation for the same callback entry', async () => {
   const entry = {};
   let calls = 0;

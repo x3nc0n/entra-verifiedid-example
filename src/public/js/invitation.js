@@ -15,12 +15,13 @@
     const location = options.location || window.location;
     const history = options.history || window.history;
     const fetchImpl = options.fetch || window.fetch.bind(window);
+    const basePath = options.basePath || '/onboarding';
     const token = extractInvitationToken(location.hash);
 
     history.replaceState(null, '', `${location.pathname}${location.search}`);
     if (!token) return { activated: false, reason: 'missing' };
 
-    const response = await fetchImpl('/onboarding/invite/activate', {
+    const response = await fetchImpl(`${basePath}/invite/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
@@ -33,7 +34,7 @@
       throw new Error(payload.error || 'Invitation activation failed.');
     }
 
-    location.replace('/onboarding/invite');
+    location.replace(`${basePath}/invite`);
     return { activated: true };
   }
 

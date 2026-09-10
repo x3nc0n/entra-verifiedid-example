@@ -42,12 +42,12 @@ function valuesMatch(actual, expectedHash, normalizer) {
     crypto.timingSafeEqual(actualHash, expected);
 }
 
-function validateLifetime(lifetimeMinutes) {
+function validateLifetime(lifetimeMinutes, entityLabel) {
   if (!Number.isInteger(lifetimeMinutes) ||
       lifetimeMinutes < 5 ||
       lifetimeMinutes > 1440) {
     throw new InvitationError(
-      'Invitation lifetime must be between 5 and 1440 minutes.',
+      `${entityLabel} lifetime must be between 5 and 1440 minutes.`,
       'invalid_lifetime'
     );
   }
@@ -92,18 +92,20 @@ class InMemoryInvitationRepository {
 class AzureTableInvitationRepository {
   constructor(options = {}) {
     this.client = options.client || null;
+    this.tableName = options.tableName || config.storage.invitationTableName;
+    this.partitionKey = options.partitionKey || 'invitation';
   }
 
   getClient() {
     if (!this.client) {
-      this.client = createTableClient(config.storage.invitationTableName);
+      this.client = createTableClient(this.tableName);
     }
     return this.client;
   }
 
   async create(record) {
     await this.getClient().createEntity({
-      partitionKey: 'invitation',
+      partitionKey: this.partitionKey,
       rowKey: record.tokenHash,
       ...record,
     });
@@ -111,7 +113,7 @@ class AzureTableInvitationRepository {
 
   async get(tokenHash) {
     try {
-      const entity = await this.getClient().getEntity('invitation', tokenHash);
+      const entity = await this.getClient().getEntity(this.partitionKey, tokenHash);
       const {
         etag,
         partitionKey,
@@ -131,7 +133,7 @@ class AzureTableInvitationRepository {
       const { etag: ignoredEtag, ...storedRecord } = record;
       await this.getClient().updateEntity(
         {
-          partitionKey: 'invitation',
+          partitionKey: this.partitionKey,
           rowKey: record.tokenHash,
           ...storedRecord,
         },
@@ -145,7 +147,9 @@ class AzureTableInvitationRepository {
   }
 }
 
-function createInvitationService(repository) {
+function createInvitationService(repository, options = {}) {
+  const entityLabel = options.entityLabel || 'Invitation';
+
   async function replaceWithRetry(tokenHash, update) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const current = await repository.get(tokenHash);
@@ -159,7 +163,7 @@ function createInvitationService(repository) {
       }
     }
     throw new InvitationError(
-      'Invitation could not be updated safely. Request a new invitation.',
+      `${entityLabel} could not be updated safely. Please try again.`,
       'concurrency'
     );
   }
@@ -167,7 +171,7 @@ function createInvitationService(repository) {
   async function createInvitation(input) {
     const lifetimeMinutes = input.lifetimeMinutes ||
       config.assurance.invitationLifetimeMinutes;
-    validateLifetime(lifetimeMinutes);
+    validateLifetime(lifetimeMinutes, entityLabel);
 
     if (!input.entraUserId || !input.userPrincipalName ||
         !input.personalEmail || !input.employeeId) {
@@ -233,17 +237,17 @@ function createInvitationService(repository) {
   async function consumeInvitation(reference, evidence) {
     const result = await replaceWithRetry(String(reference || ''), (record) => {
       if (!record) {
-        throw new InvitationError('Invitation is invalid or expired.', 'not_found');
+        throw new InvitationError(`${entityLabel} is invalid or expired.`, 'not_found');
       }
       if (record.status !== 'active') {
         throw new InvitationError(
-          'Invitation has already been used or is no longer active.',
+          `${entityLabel} has already been used or is no longer active.`,
           record.status
         );
       }
       if (Date.now() >= Date.parse(record.expiresAt)) {
         return {
-          error: new InvitationError('Invitation has expired.', 'expired'),
+          error: new InvitationError(`${entityLabel} has expired.`, 'expired'),
           record: { ...record, status: 'expired' },
         };
       }
@@ -263,7 +267,7 @@ function createInvitationService(repository) {
         const failedAttempts = record.failedAttempts + 1;
         return {
           error: new InvitationError(
-            'Invitation details do not match the approved onboarding record.',
+            `${entityLabel} details do not match the approved record.`,
             'mismatch'
           ),
           record: {

@@ -4,7 +4,7 @@
   <div class="container">
     <div class="page-header">
       <div class="step-indicator">
-        <span class="step done">1. Validate Invitation</span>
+        <span class="step done">1. Validate <%= typeof recoveryMode !== 'undefined' && recoveryMode ? 'Recovery Request' : 'Invitation' %></span>
         <span class="step-sep">&rarr;</span>
         <% if (assuranceMode === 'verified-id') { %>
           <span class="step done">2. Present Partner ID</span>
@@ -18,9 +18,13 @@
 
     <div class="card complete-panel">
       <div class="complete-icon" aria-hidden="true">&#128737;</div>
-      <h1 class="complete-title">Onboarding complete</h1>
+      <h1 class="complete-title"><%= typeof recoveryMode !== 'undefined' && recoveryMode ? 'Recovery complete' : 'Onboarding complete' %></h1>
       <p class="complete-subtitle">
-        <% if (assuranceMode === 'verified-id') { %>
+        <% if (typeof recoveryMode !== 'undefined' && recoveryMode) { %>
+          The manager-approved recovery request matched the known account details, every
+          previously registered tenant passkey was revoked, and Microsoft Graph confirms a
+          new tenant passkey is registered.
+        <% } else if (assuranceMode === 'verified-id') { %>
           The partner credential matched the invitation-bound Entra user, a one-time TAP was
           issued, and Microsoft Graph confirms a tenant passkey is registered.
         <% } else { %>
@@ -31,13 +35,13 @@
     </div>
 
     <div class="card mt-md">
-      <h2 class="card-section-title">Verified onboarding result</h2>
+      <h2 class="card-section-title">Verified <%= typeof recoveryMode !== 'undefined' && recoveryMode ? 'recovery' : 'onboarding' %> result</h2>
       <dl class="details-list">
         <dt>Entra user</dt>
         <dd><%= user.userPrincipalName %></dd>
         <dt>Assurance</dt>
-        <dd><%= assuranceMode === 'verified-id' ? 'Partner-issued Verified ID' : 'Manager-approved one-time invitation' %></dd>
-        <% if (assuranceMode === 'verified-id') { %>
+        <dd><%= typeof recoveryMode !== 'undefined' && recoveryMode ? 'Manager-approved one-time recovery request' : (assuranceMode === 'verified-id' ? 'Partner-issued Verified ID' : 'Manager-approved one-time invitation') %></dd>
+        <% if (!(typeof recoveryMode !== 'undefined' && recoveryMode) && assuranceMode === 'verified-id') { %>
           <dt>Credential issuer</dt>
           <dd><%= verifiedSubject.issuer %></dd>
           <dt>Credential type</dt>

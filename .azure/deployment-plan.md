@@ -508,3 +508,60 @@ These were out of scope for this deployment and remain outstanding, per Section 
 - Manager approver scope, invitation policy, and email-delivery implementation are not yet confirmed/approved.
 - Runtime Graph app roles and group-scoped TAP/FIDO2 policy have not been separately re-confirmed against a live pilot user.
 - Power Platform, Power Pages, and the future Verified ID extension remain fully out of scope — no related resource, workflow, or configuration was touched.
+
+## 15. Account Recovery Feature (App-Level Only, No New Infra)
+
+Added a second use case — recovery for pilot users who lost every registered
+authenticator — as a pure application-level change. **No new Azure resource,
+Key Vault secret, GitHub Environment variable, or bicep change was introduced.**
+
+### Why no infra change
+
+`.github/workflows/deploy.yml` only builds/pushes the container image and runs
+`az containerapp update`/`secret set`/`registry set` — it does not run
+`az deployment group create` or `azd provision`. Any new bicep resource (e.g. a
+second storage table) would silently NOT be applied by pushing to `main`; it
+would require a separate manual provisioning step outside CI/CD. To keep the
+feature fully deployable through the existing pipeline, it was designed to
+introduce zero new infrastructure:
+
+| Reused resource | How recovery uses it |
+|---|---|
+| Existing `onboardingInvitations` Azure Table | Recovery requests are stored in the same table under partition key `recovery` instead of `invitation` — full isolation without a new table. |
+| Existing `ONBOARDING_APPROVAL_API_KEY` / `onboarding-approval-key` Key Vault secret | Reused unchanged to gate `POST /api/recovery-requests`, mirroring `POST /api/invitations`. |
+| Existing pilot group / `PILOT_GROUP_ID` | Recovery reuses `graphService.getEligiblePilotUser`, the same eligibility check as onboarding. |
+
+### What was added
+
+- `src/services/recovery-service.js` — thin reuse of the refactored invitation
+  engine (`createInvitationService`) with `entityLabel: 'Recovery request'`
+  and partition key `recovery`.
+- `graphService.deleteFido2Method` / `revokeAllFido2Methods` — revokes every
+  existing tenant passkey for the account before a replacement TAP is issued,
+  so the account never holds a stale or potentially compromised authenticator
+  once a recovery request is validated.
+- `src/routes/recovery.js`, `src/routes/recovery-requests.js`,
+  `src/views/recovery.ejs` — mirror the onboarding routes/views; `passkey.ejs`,
+  `tap.ejs`, and `complete.ejs` were extended (not duplicated) with a
+  `recoveryMode` flag for conditional copy, reusing 100% of the existing
+  TAP/passkey registration logic.
+- `/recovery` mounted alongside `/onboarding` in `src/app.js`; nav link added
+  in `partials/header.ejs`; homepage updated to mention both use cases.
+- Tests: `test/recovery-service.test.js` (entity-label isolation, full
+  create/activate/consume cycle) and two new cases in
+  `test/identity-flow-contracts.test.js` for `revokeAllFido2Methods`.
+
+### Verification
+
+- `npm test` — 27/27 passing (21 pre-existing + 6 new).
+- Manual demo-mode smoke test of the full flow (`/recovery/demo` →
+  `/recovery/invite/activate` → `/recovery/invite` evidence POST → `tap.ejs`
+  recovery copy rendered → `/passkey` recovery title/copy rendered) — all
+  steps returned expected status codes and content.
+
+### Deployment path
+
+No manual Azure step is required. Merging to `main` and letting the existing
+`Deploy` workflow run is sufficient — same as every other app-level change
+in this repository.
+
