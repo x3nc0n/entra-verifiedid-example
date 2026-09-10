@@ -12,6 +12,8 @@ const config = require('./config');
 const indexRouter = require('./routes/index');
 const onboardingRouter = require('./routes/onboarding');
 const invitationsRouter = require('./routes/invitations');
+const recoveryRouter = require('./routes/recovery');
+const recoveryRequestsRouter = require('./routes/recovery-requests');
 const verificationRouter = require('./routes/verification');
 const passkeyRouter = require('./routes/passkey');
 const verifiedIdService = require('./services/verified-id-service');
@@ -115,6 +117,8 @@ app.get('/health', (req, res) => {
 app.use('/', indexRouter);
 app.use('/onboarding', onboardingRouter);
 app.use('/api/invitations', invitationsRouter);
+app.use('/recovery', recoveryRouter);
+app.use('/api/recovery-requests', recoveryRequestsRouter);
 app.use('/api/verification', verificationRouter);
 app.use('/passkey', passkeyRouter);
 
