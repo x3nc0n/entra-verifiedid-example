@@ -8,24 +8,18 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
 </head>
 <body>
-  <%- include('partials/header') %>
-
-  <main class="main-content">
-    <% if (typeof error !== 'undefined' && error) { %>
-      <div class="container">
-        <div class="alert alert-error">
-          <strong>Error:</strong> <%= error.message %>
-          <% if (typeof error.stack !== 'undefined' && error.stack) { %>
-            <pre class="error-stack"><%= error.stack %></pre>
-          <% } %>
-        </div>
+  <% if (typeof error !== 'undefined' && error) { %>
+    <div class="container">
+      <div class="alert alert-error">
+        <strong>Error:</strong> <%= error.message %>
+        <% if (typeof error.stack !== 'undefined' && error.stack) { %>
+          <pre class="error-stack"><%= error.stack %></pre>
+        <% } %>
       </div>
-    <% } %>
+    </div>
+  <% } %>
 
-    <%- body %>
-  </main>
-
-  <%- include('partials/footer') %>
+  <%- body %>
 
   <script src="/js/main.js"></script>
 </body>
