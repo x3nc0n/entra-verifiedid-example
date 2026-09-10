@@ -58,9 +58,8 @@
     values. Useful for local development and CI/CD preview environments.
 
 .PARAMETER GrantRuntimeManagedIdentityGraphPermissions
-    Explicitly opts into the post-deploy Microsoft Graph / Verified ID Request
-    Service app-role grant for the runtime app UAMI. The Graph grant includes
-    User.Read.All, GroupMember.Read.All, and
+    Explicitly opts into the post-deploy Microsoft Graph app-role grant for the
+    runtime app UAMI. The grant includes User.Read.All, GroupMember.Read.All, and
     UserAuthenticationMethod.ReadWrite.All. This is an admin-consent-equivalent
     directory change and is skipped unless this switch is supplied.
 
@@ -433,7 +432,7 @@ try {
     $stepErrors.Add($msg)
 }
 
-# ── Step 05b: Runtime UAMI Graph / Verified ID app roles ─────────────────────
+# ── Step 05b: Runtime UAMI Graph app roles ────────────────────────────────────
 Write-StepHeader "Step 05b — Runtime UAMI Graph App Roles" -Step "BOOTSTRAP"
 
 if ($DemoMode) {
@@ -568,7 +567,7 @@ Write-Host "  📋 Next Steps:" -ForegroundColor Cyan
 Write-Host "     1. Review the generated .env file at: $envPath" -ForegroundColor White
 Write-Host "     2. Ensure .env is listed in .gitignore — never commit secrets!" -ForegroundColor White
 if (-not $DemoMode -and -not $GrantRuntimeManagedIdentityGraphPermissions) {
-    Write-Host "     3. Run bootstrap.ps1 again with -GrantRuntimeManagedIdentityGraphPermissions (or run scripts/08-grant-app-uami-graph-permissions.ps1) before real Graph / Verified ID usage" -ForegroundColor White
+    Write-Host "     3. Run bootstrap.ps1 again with -GrantRuntimeManagedIdentityGraphPermissions (or run scripts/08-grant-app-uami-graph-permissions.ps1) before real Graph usage" -ForegroundColor White
     Write-Host "     4. Publish the first real image via .github/workflows/deploy.yml (push to main) or manual az acr build + az containerapp update" -ForegroundColor White
     Write-Host "     5. Start the portal locally if needed: npm install && npm start" -ForegroundColor White
 } else {

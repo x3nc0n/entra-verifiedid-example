@@ -146,6 +146,14 @@ test('grants the runtime UAMI only the Graph roles required by pilot onboarding'
     'UserAuthenticationMethod.ReadWrite.All',
   ]);
   assert.doesNotMatch(graphRolesBlock[1], /Directory\.Read\.All/);
+  assert.doesNotMatch(
+    permissionScript,
+    /VerifiableCredential\.Create\.(IssueRequest|PresentRequest)/
+  );
+  assert.doesNotMatch(
+    permissionScript,
+    /3db474b9-6a0c-4840-96ac-1fceb342124f/
+  );
 
   const productionExample = bootstrapScript.match(
     /# Production setup([\s\S]*?)\.EXAMPLE/

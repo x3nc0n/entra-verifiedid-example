@@ -1,22 +1,18 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Grants Microsoft Graph and Verified ID Request Service application
-    permissions to the app runtime user-assigned managed identity (UAMI).
+    Grants the approved Microsoft Graph application permissions to the app
+    runtime user-assigned managed identity (UAMI).
 
 .DESCRIPTION
     Idempotent post-deploy script that:
       - Resolves the runtime app UAMI service principal object ID
       - Requires explicit operator confirmation before performing an
         admin-consent-equivalent directory change
-      - Grants the runtime UAMI the same app-role set used by the app runtime:
-          * Microsoft Graph
-            - User.Read.All
-            - GroupMember.Read.All
-            - UserAuthenticationMethod.ReadWrite.All
-          * Verified ID Request Service
-            - VerifiableCredential.Create.IssueRequest
-            - VerifiableCredential.Create.PresentRequest
+      - Grants exactly the Microsoft Graph app-role set used by the pilot:
+          * User.Read.All
+          * GroupMember.Read.All
+          * UserAuthenticationMethod.ReadWrite.All
       - Checks existing app role assignments to avoid duplicates
 
     This is NOT Azure RBAC. The deploy UAMI must not be used here; the target
@@ -114,12 +110,6 @@ $GRAPH_APP_ROLES = @(
     "GroupMember.Read.All"
     "UserAuthenticationMethod.ReadWrite.All"
 )
-$VCS_REQUEST_APP_ID = "3db474b9-6a0c-4840-96ac-1fceb342124f"
-$VCS_REQUEST_APP_ROLES = @(
-    "VerifiableCredential.Create.IssueRequest"
-    "VerifiableCredential.Create.PresentRequest"
-)
-
 $resolvedIdentityName = if ($IdentityName) { $IdentityName } else { "uami-$AppName-app" }
 $resolvedPrincipalId = $AppRuntimeIdentityPrincipalId
 
@@ -312,13 +302,10 @@ Write-Info "Target runtime UAMI principal ID: $resolvedPrincipalId"
 
 if ($DemoMode) {
     Write-Success "[DEMO] Would grant Microsoft Graph app roles: $($GRAPH_APP_ROLES -join ', ')"
-    Write-Success "[DEMO] Would grant Verified ID Request Service app roles: $($VCS_REQUEST_APP_ROLES -join ', ')"
 } else {
     $graphSp = Get-ResourceServicePrincipal -ResourceAppId $GRAPH_APP_ID
-    $vcsRequestSp = Get-ResourceServicePrincipal -ResourceAppId $VCS_REQUEST_APP_ID
 
     Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $graphSp -RoleNames $GRAPH_APP_ROLES
-    Grant-AppRolesToPrincipal -PrincipalId $resolvedPrincipalId -ResourceServicePrincipal $vcsRequestSp -RoleNames $VCS_REQUEST_APP_ROLES
 }
 
 Format-Summary -Title "Runtime App UAMI Permission Grant" -Values @{
@@ -326,7 +313,6 @@ Format-Summary -Title "Runtime App UAMI Permission Grant" -Values @{
     RuntimeIdentityClientId = $runtimeIdentity.ClientId
     RuntimeIdentityPrincipalId = $resolvedPrincipalId
     GraphAppRoles = ($GRAPH_APP_ROLES -join ', ')
-    VerifiedIdRequestAppRoles = ($VCS_REQUEST_APP_ROLES -join ', ')
 }
 
 return @{
@@ -334,5 +320,4 @@ return @{
     AppRuntimeManagedIdentityClientId = $runtimeIdentity.ClientId
     AppRuntimeManagedIdentityPrincipalId = $resolvedPrincipalId
     GraphAppRoles = $GRAPH_APP_ROLES
-    VerifiedIdRequestAppRoles = $VCS_REQUEST_APP_ROLES
 }

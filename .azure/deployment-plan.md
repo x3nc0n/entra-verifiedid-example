@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Validated — application infrastructure deployment remains gated on the prerequisites below
+> **Status:** Deployed — application infrastructure and the real portal image are live in `rg-entra-verifiedid-example` (see Sections 14 and 16). The approved pilot user is assigned, manual invitation triggering/delivery is approved, and the runtime UAMI has the exact three required Microsoft Graph application roles. Group-scoped TAP/FIDO2 tenant policy remains a separately controlled prerequisite.
 
 Generated: 2026-09-09
 
@@ -382,12 +382,14 @@ West US 2 service support and the applicable regional quotas were checked read-o
   - [x] Perform static least-privilege RBAC review
   - [x] Validate the Docker build context statically; local Docker daemon availability is a known non-blocking workstation limitation
 - [x] Run infrastructure what-if
-- [ ] Provision approved infrastructure
-- [ ] Add an approved pilot user and perform separately approved tenant policy and directory changes
-- [ ] Configure repository environments and OIDC
-- [ ] Publish the real application image
-- [ ] Configure final callback, origin, and relying-party values
-- [ ] Verify health and end-to-end onboarding
+- [x] Provision approved infrastructure
+- [x] Add the approved pilot user to the dedicated pilot group
+- [ ] Perform separately approved group-scoped TAP/FIDO2 tenant policy changes
+- [x] Configure repository environments and OIDC
+- [x] Publish the real application image
+- [x] Configure final application base URL, origin, and relying-party values
+- [x] Verify application health and API-key enforcement
+- [ ] Verify end-to-end onboarding after the group-scoped TAP/FIDO2 policy is approved and configured
 
 ---
 
@@ -470,4 +472,112 @@ No placeholder GUIDs or fabricated secrets were used. The validation used the ap
 
 ## 13. Next Step
 
-Before deployment, provide the pilot user and add that user to `sg-entra-verifiedid-pilot`; provide the manager approver scope; approve the invitation policy and email-delivery implementation; confirm the runtime Graph app roles and group-scoped TAP/FIDO2 policy; configure repository environments and OIDC; and separately approve any application infrastructure deployment. Power Platform, Power Pages, application image publication, and the future Verified ID extension remain outside this validation run.
+Deployment and application authorization prerequisites are complete for the approved manual-invitation pilot. Before issuing a real TAP or registering a passkey, separately approve and configure the TAP/FIDO2 authentication policy for `sg-entra-verifiedid-pilot`. Power Platform, Power Pages, and the future Verified ID extension remain outside this deployment.
+
+---
+
+## 14. Deployment Execution Record
+
+Application infrastructure and the real portal image were deployed end-to-end via GitHub Actions on 2026-09-10, following user approval to proceed past validation.
+
+### What was deployed
+
+| Step | Detail |
+|------|--------|
+| GitHub Actions OIDC identity | `uami-entra-verifiedid-example-deploy` (client ID `2f14c498-18e0-47f3-8748-12f06ea2e1e4`) with federated credentials for `staging`, `production`, and `refs/heads/main`; `Contributor` + `Role Based Access Control Administrator` on `rg-entra-verifiedid-example` |
+| Infrastructure apply | `Deploy Infrastructure` workflow (`whatIf=false`, `location=westus2`) — created ACR `entravid27qmm4aqwwpfy`, Container Apps environment `entra-vid-cae`, Container App `entra-vid-app`, Key Vault `entra-vid-kv-feyizvcseko`, storage account `entravidfeyizvcsekofw`, Log Analytics `entra-vid-law`, App Insights `entra-vid-ai`, runtime UAMI `uami-entra-vid-app` (client ID `46c272db-888e-4d74-86b0-771757a8fbcb`) |
+| Key Vault secrets | `session-secret` and `onboarding-approval-key` created with randomly generated values (required temporarily granting the operator `Key Vault Secrets Officer` on the vault) |
+| GitHub Environment variables | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `PILOT_GROUP_ID`, `AZURE_CONTAINER_APP_NAME`, `AZURE_CONTAINER_APP_FQDN`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_REGISTRY_LOGIN_SERVER`, `KEY_VAULT_URL`, `AZURE_STORAGE_TABLE_ENDPOINT` set for both `staging` and `production` |
+| Application deploy | `Deploy` workflow built the real image via `az acr build`, pushed to ACR, and updated the Container App — run [`34492465021`](https://github.com/x3nc0n/entra-verifiedid-example/actions/runs/34492465021) succeeded for both `Deploy → Staging` and `Deploy → Production`, including smoke/health checks |
+
+### Live endpoint
+
+`https://entra-vid-app.happyglacier-cbe8dde8.westus2.azurecontainerapps.io` — returns HTTP 200, serves the real Express/EJS onboarding portal with the shared layout and CSS applied (current revision `entra-vid-app--0000006`).
+
+### Post-deploy fixes required
+
+Two defects surfaced only once the real image was live and were fixed and merged before this state was reached:
+
+1. **Container kept running the bootstrap placeholder script.** `infra/modules/container-app.bicep` bakes a `command`/`args` override onto the Container App for the first bootstrap deploy (an inline Node.js script printing "Infrastructure is ready..."). `az containerapp update --image ...` only replaces the image reference and does not clear that override, so the real image kept executing the bootstrap script instead of the Dockerfile's `CMD`. Fixed in `.github/workflows/deploy.yml` by adding `--command '' --args ''` to the image-update step (commit `85360e2`, PR #3).
+2. **`--command '' --args ''` itself was wrong and caused `CrashLoopBackOff`.** Azure CLI interprets `''` as a one-element list containing an empty string — an invalid exec target — rather than clearing the field. Verified live: `az containerapp show` reported `command: [""]`, and the revision crash-looped (`restartCount` incrementing, `CrashLoopBackOff`). Corrected to bare `--command`/`--args` flags with no value, which the CLI correctly resolves to `null`. Fixed in PR #4 (commit `390141d`), and applied directly to the live Container App first via `az containerapp update --command --args` (no value) to unblock verification before the workflow fix landed.
+3. **Rendered pages had no CSS at all.** Views (`index.ejs`, `onboarding.ejs`, `tap.ejs`, `verification.ejs`, `passkey.ejs`, `complete.ejs`) are authored as body-only fragments expecting `src/views/layout.ejs` to wrap them and provide `<head>`/the CSS `<link>`, but no layout engine was wired up in `src/app.js` — `res.render()` rendered fragments standalone. Fixed in `src/app.js` by wrapping `res.render()` to render the requested view to a string and pass it into `layout.ejs` as `body` (PR #4, commit `390141d`). Verified locally (all pages now include `<link rel="stylesheet" href="/css/style.css">`, `npm test` 21/21 pass) and on the live site after the corresponding `Deploy` run.
+
+### Remaining gates before real pilot users onboard
+
+The pilot user assignment, manual invitation triggering/delivery approval, and runtime Graph app roles were completed during the 2026-09-10 reconciliation in Section 16. The remaining gate is the separately approved, group-scoped TAP/FIDO2 tenant policy. Power Platform, Power Pages, and the future Verified ID extension remain fully out of scope.
+
+## 15. Account Recovery Feature (App-Level Only, No New Infra)
+
+Added a second use case — recovery for pilot users who lost every registered
+authenticator — as a pure application-level change. **No new Azure resource,
+Key Vault secret, GitHub Environment variable, or bicep change was introduced.**
+
+### Why no infra change
+
+`.github/workflows/deploy.yml` only builds/pushes the container image and runs
+`az containerapp update`/`secret set`/`registry set` — it does not run
+`az deployment group create` or `azd provision`. Any new bicep resource (e.g. a
+second storage table) would silently NOT be applied by pushing to `main`; it
+would require a separate manual provisioning step outside CI/CD. To keep the
+feature fully deployable through the existing pipeline, it was designed to
+introduce zero new infrastructure:
+
+| Reused resource | How recovery uses it |
+|---|---|
+| Existing `onboardingInvitations` Azure Table | Recovery requests are stored in the same table under partition key `recovery` instead of `invitation` — full isolation without a new table. |
+| Existing `ONBOARDING_APPROVAL_API_KEY` / `onboarding-approval-key` Key Vault secret | Reused unchanged to gate `POST /api/recovery-requests`, mirroring `POST /api/invitations`. |
+| Existing pilot group / `PILOT_GROUP_ID` | Recovery reuses `graphService.getEligiblePilotUser`, the same eligibility check as onboarding. |
+
+### What was added
+
+- `src/services/recovery-service.js` — thin reuse of the refactored invitation
+  engine (`createInvitationService`) with `entityLabel: 'Recovery request'`
+  and partition key `recovery`.
+- `graphService.deleteFido2Method` / `revokeAllFido2Methods` — revokes every
+  existing tenant passkey for the account before a replacement TAP is issued,
+  so the account never holds a stale or potentially compromised authenticator
+  once a recovery request is validated.
+- `src/routes/recovery.js`, `src/routes/recovery-requests.js`,
+  `src/views/recovery.ejs` — mirror the onboarding routes/views; `passkey.ejs`,
+  `tap.ejs`, and `complete.ejs` were extended (not duplicated) with a
+  `recoveryMode` flag for conditional copy, reusing 100% of the existing
+  TAP/passkey registration logic.
+- `/recovery` mounted alongside `/onboarding` in `src/app.js`; nav link added
+  in `partials/header.ejs`; homepage updated to mention both use cases.
+- Tests: `test/recovery-service.test.js` (entity-label isolation, full
+  create/activate/consume cycle) and two new cases in
+  `test/identity-flow-contracts.test.js` for `revokeAllFido2Methods`.
+
+### Verification
+
+- `npm test` — 27/27 passing (21 pre-existing + 6 new).
+- Manual demo-mode smoke test of the full flow (`/recovery/demo` →
+  `/recovery/invite/activate` → `/recovery/invite` evidence POST → `tap.ejs`
+  recovery copy rendered → `/passkey` recovery title/copy rendered) — all
+  steps returned expected status codes and content.
+
+### Deployment path
+
+No manual Azure step is required. Merging to `main` and letting the existing
+`Deploy` workflow run is sufficient — same as every other app-level change
+in this repository.
+
+## 16. Pilot Deployment Reconciliation
+
+The live deployment was reconciled on 2026-09-10 against the approved pilot scope.
+
+| Check | Live result |
+|---|---|
+| Azure target | Tenant `3b14ce70-8bea-4d11-9e2c-6b4a04c8010d`, subscription `7e1b60b8-d616-4396-9de2-fc917930d02e`, resource group `rg-entra-verifiedid-example` in `westus2` |
+| GitHub OIDC | Deploy UAMI `uami-entra-verifiedid-example-deploy`; federated credentials for `staging`, `production`, and `refs/heads/main`; `Contributor` plus `Role Based Access Control Administrator` at resource-group scope |
+| Runtime identity | UAMI `uami-entra-vid-app` (`46c272db-888e-4d74-86b0-771757a8fbcb`) |
+| Runtime Graph consent | Exactly `User.Read.All`, `GroupMember.Read.All`, and `UserAuthenticationMethod.ReadWrite.All`; no Verified ID Request Service role was added |
+| Pilot group | `sg-entra-verifiedid-pilot` contains only `newhire@spaid.family` |
+| Key Vault secrets | `session-secret` and `onboarding-approval-key` are enabled; each contains a 64-character random value and is referenced by the Container App through Key Vault. The operator's temporary `Key Vault Secrets Officer` assignment was removed after population. |
+| Durable state | `ONBOARDING_STATE_BACKEND=azure-table`; runtime UAMI has `Storage Table Data Contributor` only on `onboardingInvitations` and `onboardingSessions` |
+| Pilot configuration | `ASSURANCE_MODE=invitation`, `DEMO_MODE=false`, approved `PILOT_GROUP_ID`, live `APP_BASE_URL`, and live `FIDO2_RP_ID`/`FIDO2_ORIGIN` |
+| Container delivery | ACR `entravid27qmm4aqwwpfy`; Container App `entra-vid-app`; revision `entra-vid-app--0000011` running successfully |
+| Smoke tests | `/` returned 200, `/health` returned 200, and unauthenticated POSTs to `/api/invitations` and `/api/recovery-requests` returned 401 |
+
+The Graph-permission bootstrap was narrowed so future runs grant only the three approved Microsoft Graph application roles. Verified ID permissions remain deferred with the rest of that future extension.
+>>>>>>> 35dee9d (Reconcile pilot deployment permissions)

@@ -207,8 +207,8 @@ The repository's existing delivery path remains:
 - `.github/workflows/deploy.yml` for `npm ci`, tests, ACR build, and Container
   Apps rollout through GitHub OIDC.
 - `scripts/07-bootstrap-github-actions-uami.ps1` for the deployment identity.
-- `scripts/08-grant-app-uami-graph-permissions.ps1` for runtime Graph/Verified ID
-  app-role grants.
+- `scripts/08-grant-app-uami-graph-permissions.ps1` for the approved runtime
+  Graph app-role grants. Future Verified ID permissions remain deferred.
 
 The Deploy to Azure button is evaluation-only. The real application image arrives
 through the ACR/GitHub Actions flow.
