@@ -82,6 +82,32 @@ app.use((req, res, next) => {
   next();
 });
 
+// Views are authored as body-only fragments (see src/views/layout.ejs, which
+// expects a `body` string). Wrap every res.render() call so it first renders
+// the requested view to a string, then renders it into the shared layout —
+// otherwise pages return without <html>/<head>/<link> and load with no CSS.
+app.use((req, res, next) => {
+  const originalRender = res.render.bind(res);
+  res.render = (view, options, callback) => {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    options = options || {};
+    if (view === 'layout') {
+      return originalRender(view, options, callback);
+    }
+    app.render(view, { ...res.locals, ...options }, (err, html) => {
+      if (err) {
+        if (callback) return callback(err);
+        return next(err);
+      }
+      originalRender('layout', { ...options, body: html }, callback);
+    });
+  };
+  next();
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
