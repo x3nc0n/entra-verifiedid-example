@@ -1,8 +1,8 @@
 # Azure Deployment Plan
 
-> **Status:** Validated — application infrastructure deployment remains gated on the prerequisites below
+> **Status:** Deployed — application infrastructure and the real portal image are live in `rg-entra-verifiedid-example` (see Section 14). Pilot onboarding still requires the human/policy prerequisites in Section 13 (pilot user assignment, manager approver scope, invitation policy sign-off) before real end users are onboarded.
 
-Generated: 2026-09-09
+Generated: 2026-09-09 · Updated: 2026-09-10
 
 ---
 
@@ -471,3 +471,40 @@ No placeholder GUIDs or fabricated secrets were used. The validation used the ap
 ## 13. Next Step
 
 Before deployment, provide the pilot user and add that user to `sg-entra-verifiedid-pilot`; provide the manager approver scope; approve the invitation policy and email-delivery implementation; confirm the runtime Graph app roles and group-scoped TAP/FIDO2 policy; configure repository environments and OIDC; and separately approve any application infrastructure deployment. Power Platform, Power Pages, application image publication, and the future Verified ID extension remain outside this validation run.
+
+---
+
+## 14. Deployment Execution Record
+
+Application infrastructure and the real portal image were deployed end-to-end via GitHub Actions on 2026-09-10, following user approval to proceed past validation.
+
+### What was deployed
+
+| Step | Detail |
+|------|--------|
+| GitHub Actions OIDC identity | `uami-entra-verifiedid-example-deploy` (client ID `2f14c498-18e0-47f3-8748-12f06ea2e1e4`) with federated credentials for `staging`, `production`, and `refs/heads/main`; `Contributor` + `Role Based Access Control Administrator` on `rg-entra-verifiedid-example` |
+| Infrastructure apply | `Deploy Infrastructure` workflow (`whatIf=false`, `location=westus2`) — created ACR `entravid27qmm4aqwwpfy`, Container Apps environment `entra-vid-cae`, Container App `entra-vid-app`, Key Vault `entra-vid-kv-feyizvcseko`, storage account `entravidfeyizvcsekofw`, Log Analytics `entra-vid-law`, App Insights `entra-vid-ai`, runtime UAMI `uami-entra-vid-app` (client ID `46c272db-888e-4d74-86b0-771757a8fbcb`) |
+| Key Vault secrets | `session-secret` and `onboarding-approval-key` created with randomly generated values (required temporarily granting the operator `Key Vault Secrets Officer` on the vault) |
+| GitHub Environment variables | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `PILOT_GROUP_ID`, `AZURE_CONTAINER_APP_NAME`, `AZURE_CONTAINER_APP_FQDN`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_REGISTRY_LOGIN_SERVER`, `KEY_VAULT_URL`, `AZURE_STORAGE_TABLE_ENDPOINT` set for both `staging` and `production` |
+| Application deploy | `Deploy` workflow built the real image via `az acr build`, pushed to ACR, and updated the Container App — run [`34492465021`](https://github.com/x3nc0n/entra-verifiedid-example/actions/runs/34492465021) succeeded for both `Deploy → Staging` and `Deploy → Production`, including smoke/health checks |
+
+### Live endpoint
+
+`https://entra-vid-app.happyglacier-cbe8dde8.westus2.azurecontainerapps.io` — returns HTTP 200, serves the real Express/EJS onboarding portal with the shared layout and CSS applied (current revision `entra-vid-app--0000006`).
+
+### Post-deploy fixes required
+
+Two defects surfaced only once the real image was live and were fixed and merged before this state was reached:
+
+1. **Container kept running the bootstrap placeholder script.** `infra/modules/container-app.bicep` bakes a `command`/`args` override onto the Container App for the first bootstrap deploy (an inline Node.js script printing "Infrastructure is ready..."). `az containerapp update --image ...` only replaces the image reference and does not clear that override, so the real image kept executing the bootstrap script instead of the Dockerfile's `CMD`. Fixed in `.github/workflows/deploy.yml` by adding `--command '' --args ''` to the image-update step (commit `85360e2`, PR #3).
+2. **`--command '' --args ''` itself was wrong and caused `CrashLoopBackOff`.** Azure CLI interprets `''` as a one-element list containing an empty string — an invalid exec target — rather than clearing the field. Verified live: `az containerapp show` reported `command: [""]`, and the revision crash-looped (`restartCount` incrementing, `CrashLoopBackOff`). Corrected to bare `--command`/`--args` flags with no value, which the CLI correctly resolves to `null`. Fixed in PR #4 (commit `390141d`), and applied directly to the live Container App first via `az containerapp update --command --args` (no value) to unblock verification before the workflow fix landed.
+3. **Rendered pages had no CSS at all.** Views (`index.ejs`, `onboarding.ejs`, `tap.ejs`, `verification.ejs`, `passkey.ejs`, `complete.ejs`) are authored as body-only fragments expecting `src/views/layout.ejs` to wrap them and provide `<head>`/the CSS `<link>`, but no layout engine was wired up in `src/app.js` — `res.render()` rendered fragments standalone. Fixed in `src/app.js` by wrapping `res.render()` to render the requested view to a string and pass it into `layout.ejs` as `body` (PR #4, commit `390141d`). Verified locally (all pages now include `<link rel="stylesheet" href="/css/style.css">`, `npm test` 21/21 pass) and on the live site after the corresponding `Deploy` run.
+
+### Remaining gates before real pilot users onboard
+
+These were out of scope for this deployment and remain outstanding, per Section 13:
+
+- No user has yet been added to `sg-entra-verifiedid-pilot` (still empty — least-privilege, as approved).
+- Manager approver scope, invitation policy, and email-delivery implementation are not yet confirmed/approved.
+- Runtime Graph app roles and group-scoped TAP/FIDO2 policy have not been separately re-confirmed against a live pilot user.
+- Power Platform, Power Pages, and the future Verified ID extension remain fully out of scope — no related resource, workflow, or configuration was touched.
