@@ -1,0 +1,44 @@
+<%- include('partials/header') %>
+
+<main class="main-content">
+  <div class="container">
+    <div class="page-header">
+      <div class="step-indicator">
+        <span class="step done">1. Validate Invitation</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step active">2. Sign in with TAP</span>
+        <span class="step-sep">&rarr;</span>
+        <span class="step">3. Register Passkey</span>
+      </div>
+      <h1 class="page-title">Temporary Access Pass</h1>
+      <p class="page-subtitle">
+        The invitation was consumed and Microsoft Graph created a short-lived,
+        single-use Temporary Access Pass for the bound Entra user.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="alert alert-warning">
+        This value is shown once and is not stored in the session. Copy it before leaving this page.
+      </div>
+      <p><code id="tapValue"><%= temporaryAccessPass %></code></p>
+      <p>Valid for <%= lifetimeInMinutes %> minutes and configured for one use.</p>
+      <div class="form-actions">
+        <button class="btn btn-secondary" id="copyTapBtn" type="button">Copy TAP</button>
+        <a href="<%= securityInfoUrl %>" class="btn btn-primary" target="_blank" rel="noopener">
+          Sign in at Microsoft Security info
+        </a>
+        <a href="/passkey" class="btn btn-success">Continue to passkey confirmation</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script>
+document.getElementById('copyTapBtn').addEventListener('click', async function() {
+  await navigator.clipboard.writeText(document.getElementById('tapValue').textContent);
+  this.textContent = 'Copied';
+});
+</script>

@@ -1,16 +1,17 @@
 {
   "name": "entra-verifiedid-example",
   "version": "1.0.0",
-  "description": "Microsoft Entra Verified ID employee/guest onboarding demo portal",
+  "description": "Microsoft Entra manager-approved passwordless onboarding pilot",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "test": "node --test"
   },
   "dependencies": {
+    "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.0.0",
     "@azure/keyvault-secrets": "^4.7.0",
-    "@simplewebauthn/server": "^9.0.3",
     "axios": "^1.6.2",
     "cookie-parser": "^1.4.6",
     "dotenv": "^16.3.1",
@@ -24,7 +25,10 @@
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "qs": "^6.16.0"
+  }
 }

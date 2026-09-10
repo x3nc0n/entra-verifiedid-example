@@ -49,32 +49,6 @@ resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
-// ── Placeholder Secrets ────────────────────────────────────────────────────────
-// Created as placeholders so Key Vault-backed app secrets resolve consistently.
-// The bootstrap script (scripts/bootstrap.ps1) populates these with real values.
-
-resource clientSecretKvEntry 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'azure-client-secret'
-  properties: {
-    value: 'PLACEHOLDER--run-bootstrap-to-set'
-    attributes: {
-      enabled: true
-    }
-  }
-}
-
-resource identityPassKeyEntry 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'identitypass-key'
-  properties: {
-    value: 'PLACEHOLDER--run-bootstrap-to-set'
-    attributes: {
-      enabled: true
-    }
-  }
-}
-
 // ── Outputs ────────────────────────────────────────────────────────────────────
 
 @description('Key Vault URI.')

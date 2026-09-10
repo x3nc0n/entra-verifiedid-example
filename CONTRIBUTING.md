@@ -50,8 +50,8 @@ For a quick local loop without a real Entra Verified ID tenant, enable demo mode
 # .env
 DEMO_MODE=true
 SESSION_SECRET=local-dev-secret-change-me-32chars
-WEBAUTHN_RP_ID=localhost
-WEBAUTHN_ORIGIN=http://localhost:3000
+FIDO2_RP_ID=localhost
+FIDO2_ORIGIN=http://localhost:3000
 PORT=3000
 ```
 
@@ -65,9 +65,11 @@ npm start       # plain Node.js
 
 The portal is available at `http://localhost:3000`.
 
-### 5. (Optional) Full Entra Verified ID setup
+### 5. (Optional) Full Entra integration setup
 
-To test real credential issuance and presentation, complete the tenant bootstrap:
+To test live user lookup, TAP creation, and passkey confirmation, complete the tenant bootstrap.
+Partner Verified ID presentation additionally requires the approved provider contract and
+`ASSURANCE_MODE=verified-id`.
 
 ```powershell
 Connect-AzAccount

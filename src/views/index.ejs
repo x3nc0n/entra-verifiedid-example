@@ -4,14 +4,14 @@
   <section class="hero">
     <div class="container">
       <div class="hero-content">
-        <div class="hero-badge">Microsoft Entra Verified ID</div>
-        <h1 class="hero-title">Phishing-Resistant Employee Onboarding</h1>
+        <div class="hero-badge">Microsoft Entra Passwordless Onboarding</div>
+        <h1 class="hero-title">Manager-Approved Passkey Onboarding</h1>
         <p class="hero-subtitle">
-          Experience how Microsoft uses Entra Verified ID and FIDO2 passkeys to onboard
-          employees with strong, verifiable identity assurance — no passwords required.
+          Bind a one-time invitation to a pre-created Entra user, issue a
+          short-lived Temporary Access Pass, and confirm tenant passkey registration.
         </p>
         <a href="/onboarding" class="btn btn-primary btn-large">
-          Start Onboarding &rarr;
+          Open Onboarding &rarr;
         </a>
       </div>
     </div>
@@ -19,43 +19,43 @@
 
   <section class="steps-section">
     <div class="container">
-      <h2 class="section-title">How It Works</h2>
+      <h2 class="section-title">Pilot Flow</h2>
       <div class="steps-grid">
         <div class="step-card">
           <div class="step-number">1</div>
-          <div class="step-icon">📋</div>
-          <h3 class="step-title">Enter Your Details</h3>
-          <p class="step-desc">Provide your personal email and employee ID to initiate the identity verification request.</p>
+          <div class="step-icon">&#128100;</div>
+          <h3 class="step-title">Pre-create User</h3>
+          <p class="step-desc">The approver binds onboarding to the immutable Entra object ID.</p>
         </div>
         <div class="step-card">
           <div class="step-number">2</div>
-          <div class="step-icon">✅</div>
-          <h3 class="step-title">Manager Approval</h3>
-          <p class="step-desc">Your manager receives an IdentityPass notification and approves the onboarding request.</p>
+          <div class="step-icon">&#9993;</div>
+          <h3 class="step-title">Send One-Time Link</h3>
+          <p class="step-desc">An approved system delivers the opaque invitation to the known personal email.</p>
         </div>
         <div class="step-card">
           <div class="step-number">3</div>
-          <div class="step-icon">🪪</div>
-          <h3 class="step-title">Get Your Credential</h3>
-          <p class="step-desc">Scan a QR code with Microsoft Authenticator to receive your Verified ID credential.</p>
+          <div class="step-icon">&#10003;</div>
+          <h3 class="step-title">Validate Evidence</h3>
+          <p class="step-desc">Known email and employee ID must match before atomic consumption.</p>
         </div>
         <div class="step-card">
           <div class="step-number">4</div>
-          <div class="step-icon">🔍</div>
-          <h3 class="step-title">Verify Your Identity</h3>
-          <p class="step-desc">Present your Verified ID credential to the portal to confirm your identity.</p>
+          <div class="step-icon">&#128273;</div>
+          <h3 class="step-title">Create TAP</h3>
+          <p class="step-desc">Microsoft Graph creates a short-lived, single-use Temporary Access Pass.</p>
         </div>
         <div class="step-card">
           <div class="step-number">5</div>
-          <div class="step-icon">🔑</div>
-          <h3 class="step-title">Register Passkeys</h3>
-          <p class="step-desc">Set up phishing-resistant MFA with a phone passkey and/or a YubiKey hardware token.</p>
+          <div class="step-icon">&#128737;</div>
+          <h3 class="step-title">Register Passkey</h3>
+          <p class="step-desc">The user signs in at Microsoft and registers a tenant passkey.</p>
         </div>
         <div class="step-card step-card-complete">
           <div class="step-number">6</div>
-          <div class="step-icon">🛡️</div>
-          <h3 class="step-title">Onboarding Complete</h3>
-          <p class="step-desc">You're fully onboarded with phishing-resistant authentication — no passwords needed.</p>
+          <div class="step-icon">&#10003;</div>
+          <h3 class="step-title">Confirm in Graph</h3>
+          <p class="step-desc">The portal confirms the FIDO2 method before completing onboarding.</p>
         </div>
       </div>
     </div>
@@ -63,23 +63,19 @@
 
   <section class="tech-section">
     <div class="container">
-      <h2 class="section-title">Technologies Used</h2>
+      <h2 class="section-title">Core Services</h2>
       <div class="tech-grid">
         <div class="tech-card">
-          <strong>Entra Verified ID</strong>
-          <p>Decentralized identity credentials stored in Microsoft Authenticator</p>
-        </div>
-        <div class="tech-card">
-          <strong>IdentityPass</strong>
-          <p>Manager-in-the-loop identity proofing and approval workflow</p>
-        </div>
-        <div class="tech-card">
-          <strong>FIDO2 / WebAuthn</strong>
-          <p>Passkey registration for platform authenticators and hardware keys</p>
-        </div>
-        <div class="tech-card">
           <strong>Microsoft Graph</strong>
-          <p>FIDO2 security key registration in Entra ID via Graph API</p>
+          <p>Immutable user lookup, TAP creation, FIDO2 options, submission, and confirmation.</p>
+        </div>
+        <div class="tech-card">
+          <strong>Microsoft Entra</strong>
+          <p>Temporary Access Pass sign-in and tenant passkey registration.</p>
+        </div>
+        <div class="tech-card">
+          <strong>Verified ID Extension</strong>
+          <p>Optional future partner credential presentation without a fabricated provider contract.</p>
         </div>
       </div>
     </div>

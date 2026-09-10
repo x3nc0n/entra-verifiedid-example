@@ -97,26 +97,35 @@ jobs:
             --identity system \
             --only-show-errors
 
-      - name: Deploy image to Container App
-        run: |
-          az containerapp update \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --image "${{ steps.image.outputs.image }}" \
-            --only-show-errors
-
       - name: Configure Key Vault-backed secrets
         shell: bash
         run: |
           az containerapp secret set \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --secrets "identitypass-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/identitypass-key,identityref:system" \
+            --secrets \
+              "session-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/session-secret,identityref:system" \
+              "onboarding-approval-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/onboarding-approval-key,identityref:system" \
             --only-show-errors
           az containerapp update \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --set-env-vars "IDENTITYPASS_SUBSCRIPTION_KEY=secretref:identitypass-key" \
+            --set-env-vars \
+              "ASSURANCE_MODE=invitation" \
+              "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
+              "DEMO_MODE=false" \
+              "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "ONBOARDING_STATE_BACKEND=azure-table" \
+              "SESSION_SECRET=secretref:session-secret" \
+              "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
+            --only-show-errors
+
+      - name: Deploy image to Container App
+        run: |
+          az containerapp update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --image "${{ steps.image.outputs.image }}" \
             --only-show-errors
 
       - name: Resolve staging FQDN
@@ -203,26 +212,35 @@ jobs:
             --identity system \
             --only-show-errors
 
-      - name: Deploy image to Container App
-        run: |
-          az containerapp update \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --image "${{ steps.image.outputs.image }}" \
-            --only-show-errors
-
       - name: Configure Key Vault-backed secrets
         shell: bash
         run: |
           az containerapp secret set \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --secrets "identitypass-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/identitypass-key,identityref:system" \
+            --secrets \
+              "session-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/session-secret,identityref:system" \
+              "onboarding-approval-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/onboarding-approval-key,identityref:system" \
             --only-show-errors
           az containerapp update \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
-            --set-env-vars "IDENTITYPASS_SUBSCRIPTION_KEY=secretref:identitypass-key" \
+            --set-env-vars \
+              "ASSURANCE_MODE=invitation" \
+              "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
+              "DEMO_MODE=false" \
+              "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "ONBOARDING_STATE_BACKEND=azure-table" \
+              "SESSION_SECRET=secretref:session-secret" \
+              "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
+            --only-show-errors
+
+      - name: Deploy image to Container App
+        run: |
+          az containerapp update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --image "${{ steps.image.outputs.image }}" \
             --only-show-errors
 
       - name: Resolve production FQDN

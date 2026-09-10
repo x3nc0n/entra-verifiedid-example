@@ -10,7 +10,7 @@
       - Deploys infra/main.bicep (or the ARM fallback) via New-AzResourceGroupDeployment
       - Waits for deployment completion and surfaces any provisioning errors
       - Retrieves deployment outputs (Container App name/FQDN, Key Vault URI, ACR, App Insights key, runtime UAMI IDs)
-      - Stores the Entra ID / Verified ID / IdentityPass / FIDO2 configuration in Key Vault
+      - Stores non-secret Entra ID / optional Verified ID / FIDO2 configuration in Key Vault
       - Pushes runtime configuration into the Bicep deployment parameters
       - Leaves Microsoft Graph / Verified ID app-role grants for the post-deploy
         runtime-UAMI permission step (scripts/08-grant-app-uami-graph-permissions.ps1)
@@ -51,16 +51,16 @@
     Verified ID authority DID (output of 02-configure-verified-id.ps1).
 
 .PARAMETER CredentialManifestUrl
-    Credential manifest URL (output of script 02).
+    Legacy compatibility input. The portal no longer issues credentials.
 
 .PARAMETER CredentialType
     Credential type name (default: VerifiedEmployee).
 
 .PARAMETER IdentityPassEndpoint
-    IdentityPass API endpoint (output of script 03; use "demo://simulated" for demo).
+    Legacy compatibility input. The invitation flow does not call IdentityPass.
 
 .PARAMETER IdentityPassSubscriptionKey
-    IdentityPass subscription key as SecureString (leave as empty SecureString for demo).
+    Legacy compatibility input. It is not stored or passed to the application.
 
 .PARAMETER Fido2RpId
     FIDO2 relying party ID — typically the public application domain
@@ -69,6 +69,9 @@
 .PARAMETER Fido2Origin
     FIDO2 allowed origin — the full HTTPS URL
     (for example: https://myapp.<env-hash>.centralus.azurecontainerapps.io).
+
+.PARAMETER PilotGroupId
+    Immutable object ID of the dedicated Entra pilot group. Required for live runs.
 
 .PARAMETER DemoMode
     Skip real deployments and print what would happen.
@@ -116,6 +119,9 @@ param(
     [string]$Fido2RpId    = "",
     [string]$Fido2Origin  = "",
 
+    [AllowEmptyString()]
+    [string]$PilotGroupId = "",
+
     [switch]$DemoMode
 )
 
@@ -135,12 +141,20 @@ function Assert-ExplicitGuidParameter {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName is required for live runs. This public example repo does not ship a default $ParameterName. Pass -$ParameterName $placeholder explicitly."
     }
 
     if ($Value -notmatch '^[0-9a-fA-F-]{36}$') {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName must be a GUID. Pass -$ParameterName $placeholder explicitly."
     }
 }
@@ -171,6 +185,7 @@ if ($DemoMode) {
 } else {
     Assert-ExplicitGuidParameter -ParameterName "TenantId" -Value $TenantId
     Assert-ExplicitGuidParameter -ParameterName "SubscriptionId" -Value $SubscriptionId
+    Assert-ExplicitGuidParameter -ParameterName "PilotGroupId" -Value $PilotGroupId
 }
 
 # ── Step 1: Resource Group ─────────────────────────────────────────────────────
@@ -258,6 +273,7 @@ $containerAppPrincipalId = ""
 $appRuntimeManagedIdentityName = ""
 $appRuntimeManagedIdentityClientId = ""
 $appRuntimeManagedIdentityPrincipalId = ""
+$storageTableEndpoint = ""
 
 if (-not $DemoMode -and $templateFile) {
     # Build the parameter hashtable — only include optional params when non-empty
@@ -274,15 +290,12 @@ if (-not $DemoMode -and $templateFile) {
         fido2RpName           = $AppName
         fido2RpId             = $fido2RpIdValue
         fido2Origin           = $fido2OriginValue
+        pilotGroupId          = $PilotGroupId
         demoMode              = $DemoMode.IsPresent
     }
 
     # Only include optional Bicep params when values are available
     if ($VerifiedIdAuthority)   { $deployParams['verifiedIdAuthority']   = $VerifiedIdAuthority }
-    if ($CredentialManifestUrl) { $deployParams['credentialManifestUrl'] = $CredentialManifestUrl }
-    if ($IdentityPassEndpoint -and $IdentityPassEndpoint -ne "demo://simulated") {
-        $deployParams['identityPassEndpoint'] = $IdentityPassEndpoint
-    }
     if ($PSCmdlet.ShouldProcess($ResourceGroupName, "Deploy '$DEPLOYMENT_NAME'")) {
         Write-Progress-Step "Submitting deployment (this may take 5–10 minutes)..."
 
@@ -307,6 +320,7 @@ if (-not $DemoMode -and $templateFile) {
             $appRuntimeManagedIdentityName = $deployment.Outputs['appRuntimeManagedIdentityName']?.Value ?? ""
             $appRuntimeManagedIdentityClientId = $deployment.Outputs['appRuntimeManagedIdentityClientId']?.Value ?? ""
             $appRuntimeManagedIdentityPrincipalId = $deployment.Outputs['appRuntimeManagedIdentityPrincipalId']?.Value ?? ""
+            $storageTableEndpoint = $deployment.Outputs['storageTableEndpoint']?.Value ?? ""
 
             Write-Info "Container App: $webAppHostname"
             Write-Info "Key Vault:  $keyVaultUri"
@@ -322,6 +336,9 @@ if (-not $DemoMode -and $templateFile) {
             }
             if ($appRuntimeManagedIdentityPrincipalId) {
                 Write-Info "Runtime UAMI principal ID: $appRuntimeManagedIdentityPrincipalId"
+            }
+            if ($storageTableEndpoint) {
+                Write-Info "Table endpoint: $storageTableEndpoint"
             }
             if ($appInsightsKey.Length -ge 8) {
                 Write-Info "App Insights key: $($appInsightsKey.Substring(0,8))..."
@@ -348,6 +365,7 @@ if (-not $DemoMode -and $templateFile) {
     $appRuntimeManagedIdentityName = "uami-$AppName-app"
     $appRuntimeManagedIdentityClientId = "demo-runtime-uami-client-id"
     $appRuntimeManagedIdentityPrincipalId = "demo-runtime-uami-principal-id"
+    $storageTableEndpoint = "https://$storageAccount.table.core.windows.net/"
 }
 
 $webAppUrl = if ($webAppHostname) { "https://$webAppHostname" } else { "https://$AppName.demo.$Location.azurecontainerapps.io" }
@@ -373,18 +391,12 @@ if (-not $DemoMode -and $keyVaultUri) {
     $extraSecrets = [ordered]@{
         "azure-tenant-id"               = $TenantId
         "vc-issuer-authority"           = $VerifiedIdAuthority
-        "vc-credential-manifest-url"    = $CredentialManifestUrl
         "vc-credential-type"            = $CredentialType
-        "identitypass-api-endpoint"     = $IdentityPassEndpoint
         "fido2-rp-name"                 = $AppName
         "fido2-rp-id"                   = $fido2RpIdValue
         "fido2-origin"                  = $fido2OriginValue
         "app-base-url"                  = $webAppUrl
     }
-    if ($IdentityPassSubscriptionKey) {
-        $extraSecrets["identitypass-key"] = $IdentityPassSubscriptionKey
-    }
-
     foreach ($secretName in $extraSecrets.Keys) {
         if ($PSCmdlet.ShouldProcess("$vaultName/$secretName", "Set Key Vault secret")) {
             try {
@@ -453,6 +465,7 @@ $output = @{
     AppRuntimeManagedIdentityName = $appRuntimeManagedIdentityName
     AppRuntimeManagedIdentityClientId = $appRuntimeManagedIdentityClientId
     AppRuntimeManagedIdentityPrincipalId = $appRuntimeManagedIdentityPrincipalId
+    StorageTableEndpoint = $storageTableEndpoint
 }
 
 Format-Summary -Title "Infrastructure Deployment Output" -Values @{

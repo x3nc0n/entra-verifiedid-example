@@ -55,9 +55,10 @@ jobs:
           DEPLOYMENT_NAME: infra-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          PILOT_GROUP_ID: ${{ vars.PILOT_GROUP_ID }}
         run: |
           echo "Running az deployment group what-if for environment '${{ inputs.environment }}'..."
-          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" demoMode=false)
           if [ -n "${{ inputs.location }}" ]; then
             parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi
@@ -88,9 +89,10 @@ jobs:
           DEPLOYMENT_NAME: infra-${{ inputs.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          PILOT_GROUP_ID: ${{ vars.PILOT_GROUP_ID }}
         run: |
           echo "Deploying infra/main.bicep to resource group '$AZURE_RESOURCE_GROUP'..."
-          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID")
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" demoMode=false)
           if [ -n "${{ inputs.location }}" ]; then
             parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi
@@ -129,6 +131,7 @@ jobs:
               "AZURE_CONTAINER_REGISTRY_NAME": outputs.get("containerRegistryName", {}).get("value", ""),
               "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": outputs.get("containerRegistryLoginServer", {}).get("value", ""),
               "KEY_VAULT_URL": outputs.get("keyVaultUri", {}).get("value", ""),
+              "AZURE_STORAGE_TABLE_ENDPOINT": outputs.get("storageTableEndpoint", {}).get("value", ""),
               "APP_RUNTIME_UAMI_NAME": outputs.get("appRuntimeManagedIdentityName", {}).get("value", ""),
               "APP_RUNTIME_UAMI_CLIENT_ID": outputs.get("appRuntimeManagedIdentityClientId", {}).get("value", ""),
               "APP_RUNTIME_UAMI_PRINCIPAL_ID": outputs.get("appRuntimeManagedIdentityPrincipalId", {}).get("value", ""),
@@ -145,6 +148,7 @@ jobs:
               "AZURE_CONTAINER_REGISTRY_LOGIN_SERVER": resolved["AZURE_CONTAINER_REGISTRY_LOGIN_SERVER"],
               "AZURE_CONTAINER_APP_FQDN": resolved["AZURE_CONTAINER_APP_FQDN"],
               "KEY_VAULT_URL": resolved["KEY_VAULT_URL"],
+              "AZURE_STORAGE_TABLE_ENDPOINT": resolved["AZURE_STORAGE_TABLE_ENDPOINT"],
           }
 
           env_name = os.environ["TARGET_ENVIRONMENT"]

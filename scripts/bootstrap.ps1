@@ -49,15 +49,20 @@
     Container Apps URL shape and real runs should be re-run with the actual
     deployed URL once the first image has been published.
 
+.PARAMETER PilotGroupId
+    Immutable object ID of the dedicated Entra pilot group. Required for live
+    runs and passed to infrastructure/runtime configuration without a default.
+
 .PARAMETER DemoMode
     Run in demo mode — all child scripts skip real API calls and use mock
     values. Useful for local development and CI/CD preview environments.
 
 .PARAMETER GrantRuntimeManagedIdentityGraphPermissions
     Explicitly opts into the post-deploy Microsoft Graph / Verified ID Request
-    Service app-role grant for the runtime app UAMI. This is an
-    admin-consent-equivalent directory change and is skipped unless this switch
-    is supplied.
+    Service app-role grant for the runtime app UAMI. The Graph grant includes
+    User.Read.All, GroupMember.Read.All, and
+    UserAuthenticationMethod.ReadWrite.All. This is an admin-consent-equivalent
+    directory change and is skipped unless this switch is supplied.
 
 .EXAMPLE
     # Full demo setup without real tenant/subscription IDs
@@ -66,10 +71,12 @@
 .EXAMPLE
     # Production setup
     .\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-subscription-id>" `
+                    -PilotGroupId "<your-pilot-group-object-id>" `
                     -ResourceGroupName "rg-entra-verifiedid-prod" `
                     -AppName "contoso-vid" `
                     -Location "centralus" `
-                    -AppBaseUrl "https://contoso-vid-app.<env-hash>.centralus.azurecontainerapps.io"
+                    -AppBaseUrl "https://contoso-vid-app.<env-hash>.centralus.azurecontainerapps.io" `
+                    -GrantRuntimeManagedIdentityGraphPermissions
 
 .EXAMPLE
     # Dry run — preview all changes without applying them
@@ -97,6 +104,9 @@ param(
 
     [string]$AppBaseUrl = "",
 
+    [AllowEmptyString()]
+    [string]$PilotGroupId = "",
+
     [switch]$GrantRuntimeManagedIdentityGraphPermissions,
 
     [switch]$DemoMode
@@ -118,12 +128,20 @@ function Assert-ExplicitGuidParameter {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName is required for live runs. This public example repo does not ship a default $ParameterName. Pass -$ParameterName $placeholder explicitly."
     }
 
     if ($Value -notmatch '^[0-9a-fA-F-]{36}$') {
-        $placeholder = if ($ParameterName -eq "TenantId") { "<your-tenant-id>" } else { "<your-subscription-id>" }
+        $placeholder = switch ($ParameterName) {
+            "TenantId" { "<your-tenant-id>" }
+            "PilotGroupId" { "<your-pilot-group-object-id>" }
+            default { "<your-subscription-id>" }
+        }
         throw "$ParameterName must be a GUID. Pass -$ParameterName $placeholder explicitly."
     }
 }
@@ -179,6 +197,7 @@ Write-StepHeader "Prerequisites Check"
 if (-not $DemoMode) {
     Assert-ExplicitGuidParameter -ParameterName "TenantId" -Value $TenantId
     Assert-ExplicitGuidParameter -ParameterName "SubscriptionId" -Value $SubscriptionId
+    Assert-ExplicitGuidParameter -ParameterName "PilotGroupId" -Value $PilotGroupId
 }
 
 # Az module set required by all child scripts
@@ -396,6 +415,7 @@ try {
         -IdentityPassSubscriptionKey $identityPassSubscriptionKeySecure `
         -Fido2RpId $expectedDomain `
         -Fido2Origin $expectedAppUrl `
+        -PilotGroupId $PilotGroupId `
         -DemoMode:$DemoMode `
         @passThrough
 
@@ -491,6 +511,7 @@ $envValues = @{
     FIDO2_RP_NAME = $AppName
     FIDO2_RP_ID   = $expectedDomain
     FIDO2_ORIGIN  = $expectedAppUrl
+    PILOT_GROUP_ID = $PilotGroupId
 
     # ── Application ──────────────────────────────────────────────────────────────
     APP_BASE_URL   = $results['WebAppUrl'] ?? $expectedAppUrl
@@ -498,6 +519,10 @@ $envValues = @{
     SESSION_SECRET = $sessionSecret
     DEMO_MODE      = $DemoMode.IsPresent.ToString().ToLower()
     NODE_ENV       = if ($DemoMode) { "development" } else { "production" }
+    ONBOARDING_STATE_BACKEND = if ($DemoMode) { "memory" } else { "azure-table" }
+    AZURE_STORAGE_TABLE_ENDPOINT = $results['StorageTableEndpoint'] ?? ""
+    ONBOARDING_INVITATIONS_TABLE = "onboardingInvitations"
+    ONBOARDING_SESSIONS_TABLE = "onboardingSessions"
 }
 
 $envPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".." ".env"))

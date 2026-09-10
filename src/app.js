@@ -11,50 +11,70 @@ const config = require('./config');
 
 const indexRouter = require('./routes/index');
 const onboardingRouter = require('./routes/onboarding');
-const identityPassRouter = require('./routes/identitypass');
-const issuanceRouter = require('./routes/issuance');
+const invitationsRouter = require('./routes/invitations');
 const verificationRouter = require('./routes/verification');
 const passkeyRouter = require('./routes/passkey');
+const verifiedIdService = require('./services/verified-id-service');
+const { createSessionStore } = require('./services/table-session-store');
+
+function isUnsafeSecret(value) {
+  return !value ||
+    value === 'insecure-dev-secret-change-me' ||
+    value.startsWith('PLACEHOLDER--');
+}
+
+if (!['invitation', 'verified-id'].includes(config.assurance.mode)) {
+  throw new Error('ASSURANCE_MODE must be invitation or verified-id.');
+}
+
+config.validateRuntimeConfiguration();
+
+if (config.nodeEnv === 'production') {
+  if (isUnsafeSecret(config.sessionSecret)) {
+    throw new Error('SESSION_SECRET must be configured before production startup.');
+  }
+  if (isUnsafeSecret(config.assurance.approvalApiKey)) {
+    throw new Error(
+      'ONBOARDING_APPROVAL_API_KEY must be configured before production startup.'
+    );
+  }
+  if (config.assurance.mode === 'verified-id') {
+    verifiedIdService.assertPresentationConfiguration();
+  }
+}
 
 const app = express();
 
-// ── Trust proxy — required for Azure Container Apps / reverse proxies ────────
 app.set('trust proxy', 1);
-
-// ── View engine ───────────────────────────────────────────────────────────────
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
-// ── Request logging ───────────────────────────────────────────────────────────
-app.use(morgan(config.nodeEnv === 'production' ? 'combined' : 'dev'));
-
-// ── IdentityPass webhook (raw body required for HMAC validation) ─────────────
-app.use('/api/identitypass', identityPassRouter);
-
-// ── Body parsers ──────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+morgan.token('safe-url', (req) =>
+  req.path
+);
+const logFormat = config.nodeEnv === 'production'
+  ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":user-agent"'
+  : ':method :safe-url :status :response-time ms - :res[content-length]';
+app.use(morgan(logFormat));
+app.use(express.json({ limit: '32kb' }));
+app.use(express.urlencoded({ extended: false, limit: '10kb', parameterLimit: 10 }));
 app.use(cookieParser());
-
-// ── Static files ──────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
-
-// ── Session ───────────────────────────────────────────────────────────────────
 app.use(
   session({
     secret: config.sessionSecret,
+    store: createSessionStore(),
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: config.nodeEnv === 'production',
       httpOnly: true,
-      maxAge: 60 * 60 * 1000, // 1 hour
-      sameSite: 'lax',
+      maxAge: 60 * 60 * 1000,
+      sameSite: 'strict',
     },
   })
 );
 
-// ── Template locals ───────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   res.locals.demoMode = config.demoMode;
   res.locals.user = req.session.user || null;
@@ -62,19 +82,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Health probe ─────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/', indexRouter);
 app.use('/onboarding', onboardingRouter);
-app.use('/api/issuance', issuanceRouter);
+app.use('/api/invitations', invitationsRouter);
 app.use('/api/verification', verificationRouter);
 app.use('/passkey', passkeyRouter);
 
-// ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).render('index', {
     title: 'Page Not Found',
@@ -82,7 +99,6 @@ app.use((req, res) => {
   });
 });
 
-// ── Global error handler ──────────────────────────────────────────────────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error('[app] Unhandled error:', err);
@@ -98,13 +114,14 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-const PORT = config.port;
-app.listen(PORT, () => {
-  console.log(`\n🔒 Entra Verified ID Demo Portal`);
-  console.log(`   Listening on http://localhost:${PORT}`);
-  console.log(`   Demo mode: ${config.demoMode ? 'ON' : 'OFF'}`);
-  console.log(`   Environment: ${config.nodeEnv}\n`);
-});
+const port = config.port;
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`\nEntra Verified ID Onboarding Portal`);
+    console.log(`   Listening on http://localhost:${port}`);
+    console.log(`   Demo mode: ${config.demoMode ? 'ON' : 'OFF'}`);
+    console.log(`   Environment: ${config.nodeEnv}\n`);
+  });
+}
 
 module.exports = app;

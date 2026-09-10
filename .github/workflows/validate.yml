@@ -85,7 +85,8 @@ jobs:
           required = {
               'appName','location','azureTenantId','azureClientId',
               'verifiedIdAuthority','credentialManifestUrl','credentialType',
-              'identityPassEndpoint','fido2RpName','fido2RpId','fido2Origin','demoMode'
+              'identityPassEndpoint','fido2RpName','fido2RpId','fido2Origin',
+              'pilotGroupId','demoMode'
           }
           forbidden = {'azureClientSecret'}
           missing = sorted(required - params)

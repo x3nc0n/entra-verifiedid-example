@@ -12,14 +12,8 @@ param azureTenantId string
 @description('Verified ID authority DID.')
 param verifiedIdAuthority string
 
-@description('Credential manifest URL.')
-param credentialManifestUrl string
-
 @description('Credential type name.')
 param credentialType string
-
-@description('IdentityPass endpoint URL.')
-param identityPassEndpoint string
 
 @description('FIDO2 relying party display name.')
 param fido2RpName string
@@ -30,8 +24,11 @@ param fido2RpId string
 @description('FIDO2 allowed origin.')
 param fido2Origin string
 
+@description('Immutable object ID of the dedicated Entra pilot group.')
+param pilotGroupId string
+
 @description('Enable demo mode.')
-param demoMode bool = true
+param demoMode bool = false
 
 @description('Application Insights connection string.')
 param appInsightsConnectionString string = ''
@@ -50,6 +47,15 @@ param appRuntimeManagedIdentityResourceId string
 
 @description('Client ID of the app runtime user-assigned managed identity.')
 param appRuntimeManagedIdentityClientId string
+
+@description('Azure Table service endpoint for durable application state.')
+param tableEndpoint string
+
+@description('Azure Table name for onboarding invitations.')
+param invitationTableName string
+
+@description('Azure Table name for Express sessions.')
+param sessionTableName string
 
 // ── Variables ──────────────────────────────────────────────────────────────────
 
@@ -123,17 +129,21 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
             { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
             { name: 'NODE_ENV', value: 'production' }
+            { name: 'ASSURANCE_MODE', value: 'invitation' }
             { name: 'AZURE_TENANT_ID', value: azureTenantId }
             { name: 'AZURE_CLIENT_ID', value: appRuntimeManagedIdentityClientId }
-            { name: 'VC_ISSUER_AUTHORITY', value: verifiedIdAuthority }
-            { name: 'VC_CREDENTIAL_MANIFEST_URL', value: credentialManifestUrl }
+            { name: 'VC_VERIFIER_AUTHORITY', value: verifiedIdAuthority }
             { name: 'VC_CREDENTIAL_TYPE', value: credentialType }
-            { name: 'IDENTITYPASS_API_ENDPOINT', value: identityPassEndpoint }
             { name: 'FIDO2_RP_NAME', value: fido2RpName }
             { name: 'FIDO2_RP_ID', value: fido2RpId }
             { name: 'FIDO2_ORIGIN', value: fido2Origin }
+            { name: 'PILOT_GROUP_ID', value: pilotGroupId }
             { name: 'KEY_VAULT_URL', value: keyVaultUrl }
             { name: 'DEMO_MODE', value: string(demoMode) }
+            { name: 'ONBOARDING_STATE_BACKEND', value: 'azure-table' }
+            { name: 'AZURE_STORAGE_TABLE_ENDPOINT', value: tableEndpoint }
+            { name: 'ONBOARDING_INVITATIONS_TABLE', value: invitationTableName }
+            { name: 'ONBOARDING_SESSIONS_TABLE', value: sessionTableName }
             { name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsightsInstrumentationKey }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
             { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: '~3' }
@@ -145,7 +155,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 2
       }
     }
