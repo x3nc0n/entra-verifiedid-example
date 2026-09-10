@@ -163,11 +163,33 @@ No hosted Copilot SDK, function-app, cross-cloud migration, durable workflow, or
 The following are not fully provisioned by the Bicep deployment and require separate, privileged setup after approval:
 
 - Runtime identity directory application-role assignments.
-- Group-scoped FIDO2 and temporary-access policy.
 - Manager approver scope and pilot-user group.
 - Invitation delivery sender and personal-email handling policy.
 
 Credential-service authority, contract, trusted-domain binding, and any signing-key vault are deferred future-extension requirements. If that extension is approved later, do not assume the application's RBAC-enabled secret vault can also serve as the signing-key vault.
+
+### Current authentication-method policy
+
+The user's live Microsoft Entra admin-center policy view on 2026-09-10 is the
+authoritative current-state evidence:
+
+| Method | State | Target | Restrictions | Pilot impact |
+|--------|-------|--------|--------------|--------------|
+| Temporary Access Pass | **Enabled** | **All users** | No additional target restriction shown | `sg-entra-verifiedid-pilot` is included through the `all_users` target |
+| Passkey (FIDO2) | **Enabled** | **All users** | Attestation enforced; no AAGUID/key-model restriction is enforced | `sg-entra-verifiedid-pilot` is included through the `all_users` target |
+
+No authentication-method policy mutation is needed for the current pilot. A
+prior read through the Entra admin center's internal backend returned numeric
+TAP state `0`, which was interpreted as disabled. That result conflicts with
+the user's live authenticated admin-center screenshot showing TAP as **Yes**.
+The discrepancy is retained here for auditability, but the live admin-center
+view overrides that stale or ambiguous backend result.
+
+The same screenshot shows the **Verified ID authentication method** as disabled.
+That policy entry is distinct from the Microsoft Entra Verified ID service,
+decentralized-identity authority, credential issuance, and credential
+presentation work contemplated by the future v2 design. It does not block TAP
+or FIDO2 for the current pilot.
 
 ### Known implementation constraints
 
@@ -178,7 +200,7 @@ Credential-service authority, contract, trusted-domain binding, and any signing-
 - Verified ID presentation callbacks remain process-local, so production startup blocks `ASSURANCE_MODE=verified-id`.
 - `docs/architecture.md` still describes a legacy App Service/Cosmos shape. Use the Bicep, ARM template, workflows, and current README as deployment evidence instead.
 - The tenant bootstrap script performs multiple cloud and directory mutations. It must not be used as a single unattended command before each mutation and scope are reviewed.
-- The FIDO2/TAP script refuses implicit tenant-wide rollout unless an explicit override is passed. Dedicated onboarding groups are the safer default.
+- The FIDO2/TAP script refuses implicit tenant-wide rollout unless an explicit override is passed. The tenant is already enabled for all users, so the script must not be run merely to "fix" the current pilot policy. Any later narrowing to a dedicated group is a separate hardening change requiring approval.
 - The credential setup script requires a real trusted domain. A generated container hostname or managed portal hostname must not be assumed suitable until it can serve the exact well-known file over HTTPS without redirects.
 
 ### Required pilot onboarding sequence
@@ -207,7 +229,7 @@ This differs from the current application. The following corrections are mandato
 - Complete passkey registration with the directory API and verify the created authentication method.
 - Use least-privilege TAP and passkey application permissions for the runtime identity.
 - Add a protected, one-time TAP display and avoid logging or persisting the TAP value.
-- Scope TAP and FIDO2 policy to the dedicated pilot group; tenant-wide enablement is not approved.
+- Leave the currently enabled tenant-wide TAP and FIDO2 policies unchanged for the pilot. Because both target all users, the pilot group is already covered; any future scope narrowing is optional hardening and requires separate approval.
 - Keep the existing credential issuance, presentation, and callback code disabled behind a future-extension flag. If re-enabled later, callback authentication and payload minimization require a separate review.
 
 ### Future Verified ID extension
@@ -472,7 +494,7 @@ No placeholder GUIDs or fabricated secrets were used. The validation used the ap
 
 ## 13. Next Step
 
-Deployment and application authorization prerequisites are complete for the approved manual-invitation pilot. Before issuing a real TAP or registering a passkey, separately approve and configure the TAP/FIDO2 authentication policy for `sg-entra-verifiedid-pilot`. Power Platform, Power Pages, and the future Verified ID extension remain outside this deployment.
+Deployment and application authorization prerequisites are complete for the approved manual-invitation pilot. TAP and FIDO2 authentication-method policies are already enabled tenant-wide (all users) and require no mutation for `sg-entra-verifiedid-pilot` — see the "Current authentication-method policy" table above. Power Platform, Power Pages, and the future Verified ID extension remain outside this deployment.
 
 ---
 
@@ -504,7 +526,7 @@ Two defects surfaced only once the real image was live and were fixed and merged
 
 ### Remaining gates before real pilot users onboard
 
-The pilot user assignment, manual invitation triggering/delivery approval, and runtime Graph app roles were completed during the 2026-09-10 reconciliation in Section 16. The remaining gate is the separately approved, group-scoped TAP/FIDO2 tenant policy. Power Platform, Power Pages, and the future Verified ID extension remain fully out of scope.
+The pilot user assignment, manual invitation triggering/delivery approval, and runtime Graph app roles were completed during the 2026-09-10 reconciliation in Section 16. TAP and FIDO2 authentication-method policies are already enabled tenant-wide (all users) and require no mutation — see the "Current authentication-method policy" table earlier in this document. Power Platform, Power Pages, and the future Verified ID extension remain fully out of scope.
 
 ## 15. Account Recovery Feature (App-Level Only, No New Infra)
 
@@ -580,4 +602,3 @@ The live deployment was reconciled on 2026-09-10 against the approved pilot scop
 | Smoke tests | `/` returned 200, `/health` returned 200, and unauthenticated POSTs to `/api/invitations` and `/api/recovery-requests` returned 401 |
 
 The Graph-permission bootstrap was narrowed so future runs grant only the three approved Microsoft Graph application roles. Verified ID permissions remain deferred with the rest of that future extension.
->>>>>>> 35dee9d (Reconcile pilot deployment permissions)
