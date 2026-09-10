@@ -126,8 +126,8 @@ jobs:
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --image "${{ steps.image.outputs.image }}" \
-            --command '' \
-            --args '' \
+            --command \
+            --args \
             --only-show-errors
 
       - name: Resolve staging FQDN
@@ -243,8 +243,8 @@ jobs:
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --image "${{ steps.image.outputs.image }}" \
-            --command '' \
-            --args '' \
+            --command \
+            --args \
             --only-show-errors
 
       - name: Resolve production FQDN
