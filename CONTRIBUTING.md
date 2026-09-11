@@ -67,9 +67,7 @@ The portal is available at `http://localhost:3000`.
 
 ### 5. (Optional) Full Entra integration setup
 
-To test live user lookup, TAP creation, and passkey confirmation, complete the tenant bootstrap.
-Partner Verified ID presentation additionally requires the approved provider contract and
-`ASSURANCE_MODE=verified-id`.
+To test live user lookup, manager approval, Verified ID issuance/presentation, TAP creation, and passkey confirmation, complete the tenant bootstrap for the v2 self-service flow.
 
 ```powershell
 Connect-AzAccount
