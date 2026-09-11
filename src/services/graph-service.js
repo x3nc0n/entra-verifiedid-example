@@ -87,6 +87,43 @@ async function getUserById(userId) {
   }
 }
 
+async function getEmployeeWithManager(userPrincipalName) {
+  if (config.demoMode) {
+    return {
+      id: 'demo-user-id-00000000-0000-0000-0000-000000000001',
+      displayName: 'Demo User',
+      userPrincipalName,
+      employeeId: 'DEMO-001',
+      accountEnabled: true,
+      manager: {
+        id: 'demo-manager-id-00000000-0000-0000-0000-000000000002',
+        displayName: 'Demo Manager',
+        mail: 'demo.manager@tenant.example',
+        userPrincipalName: 'demo.manager@tenant.example',
+      },
+    };
+  }
+
+  const token = await getAccessToken();
+  const encodedUser = encodeURIComponent(userPrincipalName);
+  try {
+    const response = await axios.get(
+      `${config.graph.baseUrl}/v1.0/users/${encodedUser}`,
+      {
+        params: {
+          $select: 'id,displayName,userPrincipalName,employeeId,accountEnabled',
+          $expand: 'manager($select=id,displayName,mail,userPrincipalName)',
+        },
+        headers: authorizationHeaders(token),
+      }
+    );
+    return response.data;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
 async function isUserInGroup(userId, groupId) {
   if (config.demoMode) return true;
 
@@ -276,6 +313,7 @@ module.exports = {
   getAccessToken,
   getUserByPrincipalName,
   getUserById,
+  getEmployeeWithManager,
   isUserInGroup,
   getEligiblePilotUser,
   createTemporaryAccessPass,

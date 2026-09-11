@@ -29,11 +29,37 @@ identity-proofing endpoint, or issue its own employee credential.
 |------|--------|----------|
 | `invitation` | Default pilot | Manager-approved invitation validation creates the TAP directly. |
 | `verified-id` | Future extension | After invitation validation, request a partner-issued Verified ID presentation, match configured claims to the invitation-bound Entra user, then create the TAP. |
+| `self-service-verified-id-v2` | Disabled by default | Employee intake, manager OIDC approval, dedicated credential issuance and presentation, TAP creation, and Graph-confirmed passkey enrollment. |
 
 The `verified-id` extension uses the official Microsoft Entra Verified ID
 presentation request shape and authenticated callback state. It remains gated
 until the approved provider supplies its issuer DID, credential type, claim
 mapping, and delivery/issuance contract.
+
+The isolated v2 flow is enabled only when `SELF_SERVICE_V2_ENABLED=true`. It
+uses the dedicated `/v2`, `/api/v2`, and `/auth/manager` namespaces and a
+separate `onboardingV2Requests` Azure Table. Enabling the feature does not alter
+the v1 invitation routes, state, or default assurance mode.
+
+### v2 self-service flow
+
+1. The employee submits the known directory UPN and employee identifier.
+2. Graph loads the immutable employee object ID and current manager with
+   `$expand=manager`; invalid and ineligible submissions receive the same
+   generic `202` response.
+3. A durable request and one-time manager token are created. Only the token hash
+   is stored; the raw token appears only in the approval URL fragment.
+4. The manager signs in through a dedicated single-tenant OIDC application with
+   PKCE, state, and nonce. The returned `tid` and `oid` must match the configured
+   tenant and the current manager relationship.
+5. After approval, the app requests issuance of the dedicated onboarding
+   credential and then requests presentation constrained to the bound object ID
+   and employee ID.
+6. The callback verifies the exact tenant issuer, credential type, linked
+   domain, revocation status, validity dates, and bound claims before Graph can
+   create a short-lived, single-use TAP.
+7. The TAP is decrypted and displayed once. Completion requires Graph to report
+   a FIDO2 method that was not present before TAP creation.
 
 ## Security properties
 
@@ -61,12 +87,25 @@ mapping, and delivery/issuance contract.
 - Graph confirms the registered FIDO2 method before onboarding completes.
 - A passkey that existed before invitation consumption does not satisfy the
   onboarding completion check.
+- V2 request state, callback correlation, manager-token redemption, rate limits,
+  and TAP ownership use Azure Table ETag compare-and-set operations.
+- V2 manager tokens and callback states use high-entropy random values. Manager
+  tokens are stored only as SHA-256 hashes and transported only in URL fragments.
+- V2 PIN and TAP values are protected at rest with AES-256-GCM and a separately
+  configured 32-byte key. The PIN is cleared after issuance and the TAP
+  ciphertext is cleared on first display.
 
 ## Pilot limitations
 
 The approval endpoint returns the invitation URL but does not send email. Connect
 it to an approved manager workflow and email provider; do not expose the endpoint
 directly to browsers.
+
+No transactional email resource is currently approved for v2. The implemented
+`noop` notification provider logs only redacted request/correlation identifiers,
+records the delivery failure durably, and does not expose the approval URL. A
+real manager notification provider requires an explicit service decision and
+provisioning before live v2 use.
 
 Production startup is fail-closed unless demo mode is off, the dedicated pilot
 group object ID is configured, and the Azure Table state backend is available.
@@ -159,6 +198,26 @@ email.
 | `POST /api/verification/request` | Future `verified-id` mode: create partner credential presentation request. |
 | `POST /api/verification/callback` | Future `verified-id` mode: authenticated presentation callback. |
 
+### v2 routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET /v2/onboarding` | Employee intake and session-bound status UI. |
+| `POST /api/v2/onboarding/requests` | Validate directory evidence and create a durable request with a generic response. |
+| `GET /api/v2/onboarding/status` | Return coarse progress for the bound employee session. |
+| `POST /api/v2/verified-id/issuance/requests` | Create a dedicated Verified ID issuance request. |
+| `POST /api/v2/verified-id/issuance/callback` | Authenticate and correlate issuance callbacks. |
+| `POST /api/v2/verified-id/presentation/requests` | Create the constrained presentation request. |
+| `POST /api/v2/verified-id/presentation/callback` | Validate the credential and idempotently create TAP. |
+| `GET /v2/manager/approval` | Activate the fragment approval token and show the manager decision UI. |
+| `POST /api/v2/manager-approvals/activate` | Hash and bind the one-time manager token to a short pre-auth session. |
+| `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
+| `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
+| `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
+| `GET /v2/passkey` | Display the protected TAP once and direct the user to Security info. |
+| `POST /api/v2/passkey/confirm` | Confirm a newly added Graph FIDO2 method. |
+| `GET /v2/complete` | Finalize the request and destroy the onboarding session. |
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
@@ -168,7 +227,8 @@ email.
 | `SESSION_SECRET` | Production | Development placeholder | Session signing secret. |
 | `APP_BASE_URL` | Production | `http://localhost:3000` | Public origin used for invitation links and callbacks. |
 | `DEMO_MODE` | No | `false` | Use local simulated Graph responses. |
-| `ASSURANCE_MODE` | No | `invitation` | `invitation` or future `verified-id`. |
+| `ASSURANCE_MODE` | No | `invitation` | `invitation`, future `verified-id`, or `self-service-verified-id-v2`. |
+| `SELF_SERVICE_V2_ENABLED` | No | `false` | Independently exposes the v2 route namespaces. |
 | `ONBOARDING_APPROVAL_API_KEY` | Live invitation creation | None | Authenticates the approved invitation-creation integration. |
 | `INVITATION_LIFETIME_MINUTES` | No | `60` | Invitation validity, 5-1440 minutes. |
 | `INVITATION_MAX_ATTEMPTS` | No | `5` | Failed evidence checks before lockout. |
@@ -181,6 +241,7 @@ email.
 | `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
 | `ONBOARDING_INVITATIONS_TABLE` | No | `onboardingInvitations` | Durable invitation table name. |
 | `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
+| `ONBOARDING_V2_REQUESTS_TABLE` | v2 | `onboardingV2Requests` | Durable v2 requests, locks, counters, and audit table. |
 | `VC_SERVICE_SCOPE` | Future Verified ID | Request Service default | Verified ID Request Service token scope. |
 | `VC_VERIFIER_AUTHORITY` | Future Verified ID | None | Verifier tenant DID. |
 | `VC_CREDENTIAL_TYPE` | Future Verified ID | None | Partner credential type. |
@@ -188,6 +249,18 @@ email.
 | `VC_USER_PRINCIPAL_NAME_CLAIM` | Future Verified ID | None | Claim path matched to the invitation-bound UPN. |
 | `VC_EMPLOYEE_ID_CLAIM` | Future Verified ID | None | Optional employee claim path. |
 | `VC_CALLBACK_API_KEY` | Future Verified ID | None | Shared callback authentication value. |
+| `V2_TRANSIENT_PROTECTION_KEY` | v2 | None | Base64-encoded 32-byte AES-GCM key for transient PIN/TAP protection. |
+| `V2_MANAGER_OIDC_CLIENT_ID` | v2 | None | Dedicated single-tenant manager OIDC application client ID. |
+| `V2_MANAGER_OIDC_CLIENT_SECRET` | v2 | None | Manager OIDC confidential-client credential. |
+| `V2_MANAGER_OIDC_REDIRECT_URI` | v2 | `<APP_BASE_URL>/auth/manager/callback` | HTTPS `form_post` callback. |
+| `V2_VERIFIED_ID_AUTHORITY` | v2 | None | Exact tenant Verified ID authority DID. |
+| `V2_VERIFIED_ID_MANIFEST_URL` | v2 | None | Dedicated v2 contract manifest URL. |
+| `V2_VERIFIED_ID_CREDENTIAL_TYPE` | v2 | None | Dedicated v2 credential type. |
+| `V2_VERIFIED_ID_OBJECT_ID_CLAIM` | v2 | None | Object-ID claim path in issued/presented credential. |
+| `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM` | v2 | None | Employee-ID claim path in issued/presented credential. |
+| `V2_VERIFIED_ID_LINKED_DOMAIN` | v2 | None | Exact verified linked domain required from presentation. |
+| `V2_VERIFIED_ID_CALLBACK_API_KEY` | v2 | None | Shared callback authentication value. |
+| `V2_MANAGER_NOTIFICATION_PROVIDER` | v2 | `noop` | Approved manager notification adapter; only `noop` currently exists. |
 | `FIDO2_RP_NAME` | Demo only | `Entra Verified ID Demo` | Local demo relying-party name. |
 | `FIDO2_RP_ID` | Demo only | `localhost` | Local demo relying-party ID. |
 
@@ -198,6 +271,12 @@ The repository bootstrap scripts still grant the broader
 `UserAuthenticationMethod.ReadWrite.All`; a tenant/security owner should replace
 that with the current least-privilege TAP and passkey app roles after validating
 tenant availability.
+
+V2 records the narrower intended application-role names:
+`User.Read.All`, `GroupMember.Read.All`,
+`UserAuthMethod-TAP.ReadWrite.All`, and
+`UserAuthMethod-Passkey.Read.All`. Tenant grants remain a separate provisioning
+step and are not performed by this application.
 
 ## Azure delivery
 
@@ -238,6 +317,11 @@ through the ACR/GitHub Actions flow.
    obtain the real provider contract and configure the
    exact issuer, type, claims, presentation callback authentication, and subject
    matching rules.
+7. Before enabling v2, provision the dedicated manager OIDC app, Verified ID
+   contract/manifest, callback key, transient-protection key, v2 Azure Table and
+   table-level RBAC, granular Graph app roles, and an explicitly approved
+   transactional manager-notification integration. These inputs are pending
+   tenant provisioning; this repository contains placeholders only.
 
 See [`docs/architecture.md`](docs/architecture.md) and [SECURITY.md](SECURITY.md).
 

@@ -31,12 +31,26 @@ function isTableName(value) {
   return /^[A-Za-z][A-Za-z0-9]{2,62}$/.test(String(value || ''));
 }
 
+function isBoolean(value) {
+  return String(value || '').toLowerCase() === 'true';
+}
+
+function isProtectionKey(value) {
+  try {
+    return Buffer.from(String(value || ''), 'base64').length === 32;
+  } catch (_) {
+    return false;
+  }
+}
+
+const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+
 const config = {
   // ── Application ─────────────────────────────────────────────────────────────
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   sessionSecret: process.env.SESSION_SECRET || 'insecure-dev-secret-change-me',
-  appBaseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
+  appBaseUrl,
   demoMode: process.env.DEMO_MODE === 'true',
 
   // ── First-release assurance ──────────────────────────────────────────────────
@@ -81,6 +95,71 @@ const config = {
     callbackApiKey: process.env.VC_CALLBACK_API_KEY || '',
   },
 
+  // ── v2 self-service Verified ID ─────────────────────────────────────────────
+  selfServiceV2: {
+    enabled: isBoolean(process.env.SELF_SERVICE_V2_ENABLED),
+    requestLifetimeMinutes: parseInteger(
+      process.env.V2_REQUEST_LIFETIME_MINUTES,
+      1440
+    ),
+    managerTokenLifetimeMinutes: parseInteger(
+      process.env.V2_MANAGER_TOKEN_LIFETIME_MINUTES,
+      1440
+    ),
+    managerPreAuthLifetimeMinutes: parseInteger(
+      process.env.V2_MANAGER_PREAUTH_LIFETIME_MINUTES,
+      10
+    ),
+    maxDailyRequestsPerUpn: parseInteger(
+      process.env.V2_MAX_DAILY_REQUESTS_PER_UPN,
+      3
+    ),
+    maxDailyRequestsPerIp: parseInteger(
+      process.env.V2_MAX_DAILY_REQUESTS_PER_IP,
+      10
+    ),
+    maxDailyRequestsPerEmployee: parseInteger(
+      process.env.V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE,
+      3
+    ),
+    maxPasskeyConfirmAttempts: parseInteger(
+      process.env.V2_MAX_PASSKEY_CONFIRM_ATTEMPTS,
+      30
+    ),
+    maxIssuanceRetries: parseInteger(process.env.V2_MAX_ISSUANCE_RETRIES, 3),
+    maxPresentationRetries: parseInteger(
+      process.env.V2_MAX_PRESENTATION_RETRIES,
+      3
+    ),
+    maxVerificationFailures: parseInteger(
+      process.env.V2_MAX_VERIFICATION_FAILURES,
+      3
+    ),
+    protectionKey: process.env.V2_TRANSIENT_PROTECTION_KEY || '',
+    managerOidc: {
+      clientId: process.env.V2_MANAGER_OIDC_CLIENT_ID || '',
+      clientSecret: process.env.V2_MANAGER_OIDC_CLIENT_SECRET || '',
+      redirectUri: process.env.V2_MANAGER_OIDC_REDIRECT_URI ||
+        `${appBaseUrl}/auth/manager/callback`,
+    },
+    verifiedId: {
+      authority: process.env.V2_VERIFIED_ID_AUTHORITY || '',
+      manifestUrl: process.env.V2_VERIFIED_ID_MANIFEST_URL || '',
+      credentialType: process.env.V2_VERIFIED_ID_CREDENTIAL_TYPE || '',
+      objectIdClaim: process.env.V2_VERIFIED_ID_OBJECT_ID_CLAIM || '',
+      employeeIdClaim: process.env.V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM || '',
+      linkedDomain: process.env.V2_VERIFIED_ID_LINKED_DOMAIN || '',
+      callbackApiKey: process.env.V2_VERIFIED_ID_CALLBACK_API_KEY || '',
+      issuancePinLength: parseInteger(
+        process.env.V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH,
+        6
+      ),
+    },
+    notification: {
+      provider: process.env.V2_MANAGER_NOTIFICATION_PROVIDER || 'noop',
+    },
+  },
+
   // ── Microsoft Graph API ──────────────────────────────────────────────────────
   graph: {
     baseUrl: 'https://graph.microsoft.com',
@@ -89,6 +168,12 @@ const config = {
     tapLifetimeMinutes: parseInteger(process.env.TAP_LIFETIME_MINUTES, 60),
     securityInfoUrl: process.env.ENTRA_SECURITY_INFO_URL ||
       'https://mysignins.microsoft.com/security-info',
+    requiredV2ApplicationPermissions: [
+      'User.Read.All',
+      'GroupMember.Read.All',
+      'UserAuthMethod-TAP.ReadWrite.All',
+      'UserAuthMethod-Passkey.Read.All',
+    ],
   },
 
   // ── Durable state ────────────────────────────────────────────────────────────
@@ -99,6 +184,8 @@ const config = {
       'onboardingInvitations',
     sessionTableName: process.env.ONBOARDING_SESSIONS_TABLE ||
       'onboardingSessions',
+    v2RequestTableName: process.env.ONBOARDING_V2_REQUESTS_TABLE ||
+      'onboardingV2Requests',
   },
 
   // ── FIDO2 / WebAuthn ─────────────────────────────────────────────────────────
@@ -116,8 +203,11 @@ const config = {
   },
 };
 
-if (!['invitation', 'verified-id'].includes(config.assurance.mode)) {
-  throw new Error('ASSURANCE_MODE must be invitation or verified-id.');
+if (!['invitation', 'verified-id', 'self-service-verified-id-v2']
+  .includes(config.assurance.mode)) {
+  throw new Error(
+    'ASSURANCE_MODE must be invitation, verified-id, or self-service-verified-id-v2.'
+  );
 }
 if (config.assurance.invitationMaxAttempts < 1 ||
     config.assurance.invitationMaxAttempts > 20) {
@@ -149,7 +239,9 @@ function validateRuntimeConfiguration() {
       );
     }
     if (!isTableName(config.storage.invitationTableName) ||
-        !isTableName(config.storage.sessionTableName)) {
+        !isTableName(config.storage.sessionTableName) ||
+        (config.selfServiceV2.enabled &&
+          !isTableName(config.storage.v2RequestTableName))) {
       errors.push(
         'Azure Table names must be 3-63 alphanumeric characters and start with a letter.'
       );
@@ -162,6 +254,52 @@ function validateRuntimeConfiguration() {
     errors.push(
       'ASSURANCE_MODE=verified-id is blocked in production until callback state is durable.'
     );
+  }
+  if (config.assurance.mode === 'self-service-verified-id-v2' &&
+      !config.selfServiceV2.enabled) {
+    errors.push(
+      'ASSURANCE_MODE=self-service-verified-id-v2 requires SELF_SERVICE_V2_ENABLED=true.'
+    );
+  }
+  if (config.selfServiceV2.enabled) {
+    const v2 = config.selfServiceV2;
+    const verifiedId = v2.verifiedId;
+    const managerOidc = v2.managerOidc;
+    if (!isGuid(config.azure.tenantId)) {
+      errors.push('AZURE_TENANT_ID must be configured for self-service v2.');
+    }
+    if (!managerOidc.clientId) {
+      errors.push('V2_MANAGER_OIDC_CLIENT_ID is required when v2 is enabled.');
+    }
+    if (!managerOidc.clientSecret) {
+      errors.push('V2_MANAGER_OIDC_CLIENT_SECRET is required when v2 is enabled.');
+    }
+    if (!isHttpsUrl(managerOidc.redirectUri) && !config.demoMode) {
+      errors.push('V2_MANAGER_OIDC_REDIRECT_URI must use HTTPS.');
+    }
+    if (!verifiedId.authority ||
+        !verifiedId.manifestUrl ||
+        !verifiedId.credentialType ||
+        !verifiedId.objectIdClaim ||
+        !verifiedId.employeeIdClaim ||
+        !verifiedId.linkedDomain ||
+        !verifiedId.callbackApiKey) {
+      errors.push(
+        'V2 Verified ID authority, manifest, type, claim paths, linked domain, and callback key are required.'
+      );
+    }
+    if (!isHttpsUrl(verifiedId.manifestUrl)) {
+      errors.push('V2_VERIFIED_ID_MANIFEST_URL must use HTTPS.');
+    }
+    if (!isProtectionKey(v2.protectionKey)) {
+      errors.push(
+        'V2_TRANSIENT_PROTECTION_KEY must be a base64-encoded 32-byte key.'
+      );
+    }
+    if (v2.verifiedId.issuancePinLength < 4 ||
+        v2.verifiedId.issuancePinLength > 16) {
+      errors.push('V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH must be between 4 and 16.');
+    }
   }
 
   if (errors.length > 0) {
