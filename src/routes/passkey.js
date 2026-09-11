@@ -21,7 +21,8 @@ function findNewFido2Method(methods, existingMethodIds) {
 router.get('/', ensureTapCreated, (req, res) => {
   const state = req.session.onboardingState;
   return res.render('passkey', {
-    title: 'Register Tenant Passkey',
+    title: state.recoveryMode ? 'Register Replacement Passkey' : 'Register Tenant Passkey',
+    recoveryMode: !!state.recoveryMode,
     passkeyRegistered: state.passkeyRegistered || false,
     securityInfoUrl: config.graph.securityInfoUrl,
     assuranceMode: state.assuranceMode || config.assurance.mode,
@@ -124,7 +125,8 @@ router.get('/complete', ensureTapCreated, (req, res) => {
   state.step = 'complete';
   state.completedAt = new Date().toISOString();
   return res.render('complete', {
-    title: 'Onboarding Complete',
+    title: state.recoveryMode ? 'Recovery Complete' : 'Onboarding Complete',
+    recoveryMode: !!state.recoveryMode,
     user: req.session.user,
     verifiedSubject: state.verifiedSubject || {},
     assuranceMode: state.assuranceMode || config.assurance.mode,

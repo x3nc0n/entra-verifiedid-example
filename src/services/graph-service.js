@@ -309,6 +309,38 @@ async function listFido2Methods(userId) {
   return response.data.value || [];
 }
 
+async function deleteFido2Method(userId, methodId) {
+  if (config.demoMode) {
+    return { deleted: true, id: methodId };
+  }
+
+  const token = await getAccessToken();
+  const encodedUser = encodeURIComponent(userId);
+  const encodedMethod = encodeURIComponent(methodId);
+  await axios.delete(
+    `${config.graph.baseUrl}/v1.0/users/${encodedUser}/authentication/fido2Methods/${encodedMethod}`,
+    { headers: authorizationHeaders(token) }
+  );
+  return { deleted: true, id: methodId };
+}
+
+// Revokes every existing tenant passkey for a user who reports losing all of
+// their authenticators, so a stale or potentially compromised credential can
+// never be used again once account recovery has issued a new one.
+async function revokeAllFido2Methods(userId, dependencies = {}) {
+  const listMethods = dependencies.listFido2Methods || listFido2Methods;
+  const deleteMethod = dependencies.deleteFido2Method || deleteFido2Method;
+
+  const methods = await listMethods(userId);
+  const revokedMethodIds = [];
+  for (const method of methods) {
+    // eslint-disable-next-line no-await-in-loop
+    await deleteMethod(userId, method.id);
+    revokedMethodIds.push(method.id);
+  }
+  return revokedMethodIds;
+}
+
 module.exports = {
   getAccessToken,
   getUserByPrincipalName,
@@ -321,6 +353,8 @@ module.exports = {
   getFido2CreationOptions,
   registerFido2Key,
   listFido2Methods,
+  deleteFido2Method,
+  revokeAllFido2Methods,
   buildFido2RegistrationPayload,
   PilotEligibilityError,
 };

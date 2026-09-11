@@ -393,6 +393,9 @@ before setting `SELF_SERVICE_V2_ENABLED=true`.
    Key Vault-backed secret.
 
 See [`docs/architecture.md`](docs/architecture.md) and [SECURITY.md](SECURITY.md).
+For role-based step-by-step guides (Admin, Manager, User) covering both the
+onboarding and account recovery flows, see
+[`docs/job-aids.md`](docs/job-aids.md).
 
 ## License
 

@@ -10,7 +10,7 @@ function ensureOnboarded(req, res, next) {
 function ensureVerified(req, res, next) {
   const state = req.session.onboardingState;
   if (!state || !state.vcVerified) {
-    return res.redirect('/onboarding/verify');
+    return res.redirect(state?.recoveryMode ? '/recovery/verify' : '/onboarding/verify');
   }
   next();
 }
@@ -18,7 +18,7 @@ function ensureVerified(req, res, next) {
 function ensureTapCreated(req, res, next) {
   const state = req.session.onboardingState;
   if (!state || !state.identityAssured || !state.tapCreated) {
-    return res.redirect('/onboarding');
+    return res.redirect(state?.recoveryMode ? '/recovery' : '/onboarding');
   }
   next();
 }
