@@ -274,14 +274,23 @@ router.post(
 
     try {
       const employee = await graphService.getEmployeeWithManager(userPrincipalName);
+      const submittedEmployeeHash = hashNormalized(employeeId);
       const authoritativeEmployeeHash = hashNormalized(employee?.employeeId);
+      if (!employee?.employeeId ||
+          !timingSafeHashEqual(submittedEmployeeHash, authoritativeEmployeeHash)) {
+        throw new onboardingService.V2StateError(
+          'The employee invite confirmation did not match the bound employee.',
+          'employee_confirmation_failed',
+          403
+        );
+      }
       await graphService.getEligiblePilotUser(preAuth.employeeObjectId);
       const updated = await onboardingService.confirmEmployeeInvite({
         requestId: preAuth.requestId,
         tokenHash: preAuth.tokenHash,
         employeeObjectId: employee?.id,
         userPrincipalName,
-        employeeIdHash: authoritativeEmployeeHash,
+        employeeIdHash: submittedEmployeeHash,
       });
       await regenerateSession(req);
       req.session.v2Employee = {
