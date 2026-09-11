@@ -5,15 +5,15 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const config = require('../src/config');
-const graphService = require('../src/services/graph-service');
 const {
   AzureTableSessionStore,
   sessionRowKey,
 } = require('../src/services/table-session-store');
-const {
-  extractInvitationToken,
-  activateFromCurrentFragment,
-} = require('../src/public/js/invitation');
+const { setV2SecurityHeaders } = require('../src/middleware/v2-security');
+
+function read(relativePath) {
+  return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+}
 
 function callStore(store, method, ...args) {
   return new Promise((resolve, reject) => {
@@ -21,151 +21,20 @@ function callStore(store, method, ...args) {
   });
 }
 
-test('extracts and clears fragment token before posting it in a JSON body', async () => {
-  const requests = [];
-  const location = {
-    hash: '#token=opaque-secret',
-    pathname: '/onboarding/invite',
-    search: '',
-    replace(value) {
-      this.replacedWith = value;
-    },
-  };
-  const history = {
-    replaceState(_state, _title, value) {
-      location.hash = '';
-      location.clearedTo = value;
-    },
-  };
-
-  const result = await activateFromCurrentFragment({
-    location,
-    history,
-    fetch: async (url, options) => {
-      requests.push({ url, options, fragmentAtRequest: location.hash });
-      return { ok: true };
-    },
-  });
-
-  assert.equal(extractInvitationToken('#token=opaque-secret'), 'opaque-secret');
-  assert.equal(requests[0].url, '/onboarding/invite/activate');
-  assert.equal(requests[0].fragmentAtRequest, '');
-  assert.deepEqual(JSON.parse(requests[0].options.body), { token: 'opaque-secret' });
-  assert.equal(location.clearedTo, '/onboarding/invite');
-  assert.equal(location.replacedWith, '/onboarding/invite');
-  assert.equal(result.activated, true);
-});
-
-test('contains no token-bearing invitation path or query contract', () => {
-  const onboardingRoute = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'onboarding.js'),
-    'utf8'
-  );
-  const invitationRoute = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'invitations.js'),
-    'utf8'
+test('sets no-store and CSP security headers globally', () => {
+  const headers = new Map();
+  setV2SecurityHeaders(
+    {},
+    { set(name, value) { headers.set(name, value); } },
+    () => {}
   );
 
-  assert.doesNotMatch(onboardingRoute, /invite\/:token/);
-  assert.match(invitationRoute, /\/onboarding\/invite#token=/);
-  assert.doesNotMatch(invitationRoute, /\/onboarding\/invite\/\$\{/);
-});
-
-test('reloads eligibility before creating a TAP and never accepts a browser-selected user', async () => {
-  const calls = [];
-  const result = await graphService.createTemporaryAccessPassForPilotUser(
-    '11111111-2222-3333-4444-555555555555',
-    {
-      getEligiblePilotUser: async (userId) => {
-        calls.push(['reload-eligibility', userId]);
-        return { id: userId, accountEnabled: true };
-      },
-      createTemporaryAccessPass: async (userId) => {
-        calls.push(['create-tap', userId]);
-        return { temporaryAccessPass: 'test-only' };
-      },
-    }
-  );
-
-  assert.deepEqual(calls.map(([name]) => name), [
-    'reload-eligibility',
-    'create-tap',
-  ]);
-  assert.equal(result.user.id, '11111111-2222-3333-4444-555555555555');
-});
-
-test('requires enabled account and current pilot group membership', async () => {
-  await assert.rejects(
-    graphService.getEligiblePilotUser('user-id', {
-      pilotGroupId: 'group-id',
-      getUserById: async () => ({ id: 'user-id', accountEnabled: false }),
-      isUserInGroup: async () => true,
-    }),
-    (err) => err.code === 'account_disabled'
-  );
-
-  await assert.rejects(
-    graphService.getEligiblePilotUser('user-id', {
-      pilotGroupId: 'group-id',
-      getUserById: async () => ({ id: 'user-id', accountEnabled: true }),
-      isUserInGroup: async () => false,
-    }),
-    (err) => err.code === 'pilot_group_required'
-  );
-});
-
-test('grants the runtime UAMI only the Graph roles required by pilot onboarding', () => {
-  const permissionScript = fs.readFileSync(
-    path.join(
-      __dirname,
-      '..',
-      'scripts',
-      '08-grant-app-uami-graph-permissions.ps1'
-    ),
-    'utf8'
-  );
-  const bootstrapScript = fs.readFileSync(
-    path.join(__dirname, '..', 'scripts', 'bootstrap.ps1'),
-    'utf8'
-  );
-  const readme = fs.readFileSync(
-    path.join(__dirname, '..', 'README.md'),
-    'utf8'
-  );
-
-  const graphRolesBlock = permissionScript.match(
-    /\$GRAPH_APP_ROLES = @\(([\s\S]*?)\r?\n\)/
-  );
-  assert.ok(graphRolesBlock, 'Graph app-role list should be declared');
-  const graphRoles = [...graphRolesBlock[1].matchAll(/"([^"]+)"/g)]
-    .map((match) => match[1]);
-
-  assert.deepEqual(graphRoles, [
-    'User.Read.All',
-    'GroupMember.Read.All',
-    'UserAuthenticationMethod.ReadWrite.All',
-  ]);
-  assert.doesNotMatch(graphRolesBlock[1], /Directory\.Read\.All/);
-  assert.doesNotMatch(
-    permissionScript,
-    /VerifiableCredential\.Create\.(IssueRequest|PresentRequest)/
-  );
-  assert.doesNotMatch(
-    permissionScript,
-    /3db474b9-6a0c-4840-96ac-1fceb342124f/
-  );
-
-  const productionExample = bootstrapScript.match(
-    /# Production setup([\s\S]*?)\.EXAMPLE/
-  );
-  assert.ok(productionExample, 'Production bootstrap example should exist');
-  assert.match(
-    productionExample[1],
-    /-GrantRuntimeManagedIdentityGraphPermissions/
-  );
-  assert.match(readme, /Before the first production pilot release/);
-  assert.match(readme, /GroupMember\.Read\.All/);
-  assert.match(readme, /checkMemberGroups/);
+  assert.equal(headers.get('Cache-Control'), 'no-store');
+  assert.equal(headers.get('Pragma'), 'no-cache');
+  assert.equal(headers.get('Referrer-Policy'), 'no-referrer');
+  assert.match(headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+  assert.equal(headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.equal(headers.get('X-Frame-Options'), 'DENY');
 });
 
 test('persists shared Express sessions through the table client', async () => {
@@ -195,7 +64,7 @@ test('persists shared Express sessions through the table client', async () => {
       expires: new Date(Date.now() + 60_000).toISOString(),
       originalMaxAge: 60_000,
     },
-    onboardingState: { step: 'tap' },
+    v2Employee: { requestId: 'request-id' },
   };
 
   await callStore(store, 'set', 'raw-session-id', value);
@@ -203,7 +72,7 @@ test('persists shared Express sessions through the table client', async () => {
   assert.deepEqual(await callStore(store, 'get', 'raw-session-id'), value);
   await callStore(store, 'touch', 'raw-session-id', {
     cookie: { originalMaxAge: 120_000 },
-    onboardingState: { step: 'stale' },
+    v2Employee: { requestId: 'stale' },
   });
   assert.deepEqual(await callStore(store, 'get', 'raw-session-id'), value);
   await callStore(store, 'destroy', 'raw-session-id');
@@ -218,6 +87,14 @@ test('blocks unsafe production and non-demo in-memory startup modes', () => {
     backend: config.storage.backend,
     tableEndpoint: config.storage.tableEndpoint,
     pilotGroupId: config.graph.pilotGroupId,
+    sessionTableName: config.storage.sessionTableName,
+    v2RequestTableName: config.storage.v2RequestTableName,
+    tenantId: config.azure.tenantId,
+    managerClientId: config.selfServiceV2.managerOidc.clientId,
+    managerClientSecret: config.selfServiceV2.managerOidc.clientSecret,
+    managerRedirectUri: config.selfServiceV2.managerOidc.redirectUri,
+    verifiedId: structuredClone(config.selfServiceV2.verifiedId),
+    protectionKey: config.selfServiceV2.protectionKey,
   };
 
   try {
@@ -233,6 +110,23 @@ test('blocks unsafe production and non-demo in-memory startup modes', () => {
     config.demoMode = false;
     config.storage.backend = 'memory';
     config.graph.pilotGroupId = '11111111-2222-3333-4444-555555555555';
+    config.storage.tableEndpoint = 'https://storage.example.table.core.windows.net';
+    config.storage.sessionTableName = 'onboardingSessions';
+    config.storage.v2RequestTableName = 'onboardingV2Requests';
+    config.azure.tenantId = '11111111-2222-3333-4444-555555555555';
+    config.selfServiceV2.managerOidc.clientId = 'manager-client-id';
+    config.selfServiceV2.managerOidc.clientSecret = 'manager-secret';
+    config.selfServiceV2.managerOidc.redirectUri = 'https://portal.example/auth/manager/callback';
+    Object.assign(config.selfServiceV2.verifiedId, {
+      authority: 'did:web:verifiedid.tenant.example:authority',
+      manifestUrl: 'https://verifiedid.did.msidentity.com/manifest',
+      credentialType: 'EmployeeOnboardingV2',
+      objectIdClaim: 'employee.objectId',
+      employeeIdClaim: 'employee.employeeId',
+      linkedDomain: 'tenant.example',
+      callbackApiKey: 'callback-key',
+    });
+    config.selfServiceV2.protectionKey = Buffer.alloc(32, 1).toString('base64');
     assert.throws(
       () => config.validateRuntimeConfiguration(),
       /ONBOARDING_STATE_BACKEND=azure-table/
@@ -244,52 +138,24 @@ test('blocks unsafe production and non-demo in-memory startup modes', () => {
     config.storage.backend = original.backend;
     config.storage.tableEndpoint = original.tableEndpoint;
     config.graph.pilotGroupId = original.pilotGroupId;
+    config.storage.sessionTableName = original.sessionTableName;
+    config.storage.v2RequestTableName = original.v2RequestTableName;
+    config.azure.tenantId = original.tenantId;
+    config.selfServiceV2.managerOidc.clientId = original.managerClientId;
+    config.selfServiceV2.managerOidc.clientSecret = original.managerClientSecret;
+    config.selfServiceV2.managerOidc.redirectUri = original.managerRedirectUri;
+    config.selfServiceV2.verifiedId = original.verifiedId;
+    config.selfServiceV2.protectionKey = original.protectionKey;
   }
 });
 
-test('keeps cloud defaults non-demo and provisions durable table state', () => {
-  const mainBicep = fs.readFileSync(
-    path.join(__dirname, '..', 'infra', 'main.bicep'),
-    'utf8'
-  );
-  const storageBicep = fs.readFileSync(
-    path.join(__dirname, '..', 'infra', 'modules', 'storage.bicep'),
-    'utf8'
-  );
-  const deployWorkflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'deploy.yml'),
-    'utf8'
-  );
-  const arm = JSON.parse(fs.readFileSync(
-    path.join(__dirname, '..', 'azuredeploy.json'),
-    'utf8'
-  ));
+test('renders 404 and error handlers from the dedicated status view', () => {
+  const appSource = read('src/app.js');
+  const statusView = read('src/views/status.ejs');
 
-  assert.match(mainBicep, /param demoMode bool = false/);
-  assert.equal(arm.parameters.demoMode.defaultValue, false);
-  assert.match(deployWorkflow, /DEMO_MODE=false/g);
-  assert.match(storageBicep, /onboardingInvitations/);
-  assert.match(storageBicep, /onboardingSessions/);
-  assert.match(
-    storageBicep,
-    /0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3/
-  );
-  assert.match(storageBicep, /scope: invitationTable/);
-  assert.match(storageBicep, /scope: sessionTable/);
-  assert.doesNotMatch(storageBicep, /scope: storageAccount/);
-  const tableRoleAssignments = arm.resources.filter(
-    (resource) =>
-      resource.type === 'Microsoft.Authorization/roleAssignments' &&
-      resource.properties.roleDefinitionId.includes(
-        '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
-      )
-  );
-  assert.equal(tableRoleAssignments.length, 2);
-  assert.ok(tableRoleAssignments.some(
-    (resource) => resource.scope.includes('onboardingInvitations')
-  ));
-  assert.ok(tableRoleAssignments.some(
-    (resource) => resource.scope.includes('onboardingSessions')
-  ));
-  assert.doesNotMatch(storageBicep, /listKeys\(\)/);
+  assert.match(appSource, /render\('status'/);
+  assert.doesNotMatch(appSource, /render\('index'/);
+  assert.match(statusView, /error\?\.message \|\| message/);
+  assert.match(appSource, /Return to onboarding/);
+  assert.match(appSource, /Restart onboarding/);
 });

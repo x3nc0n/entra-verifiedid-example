@@ -1,61 +1,63 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="csrf-token" content="<%= csrfToken %>">
-  <title><%= title %></title>
-  <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-  <%- include('partials/header') %>
-  <main class="main-content">
-    <div class="container">
-      <div class="page-header">
-        <h1 class="page-title">Self-Service Verified ID Onboarding</h1>
-        <p class="page-subtitle">
-          Submit your tenant account and employee ID. Your current Entra manager
-          must approve before a credential or access pass can be issued.
-        </p>
-      </div>
-
-      <section class="card" id="v2IntakePanel">
-        <h2 class="card-section-title">Start onboarding</h2>
-        <form id="v2IntakeForm">
-          <div class="form-group">
-            <label for="userPrincipalName">Tenant user principal name</label>
-            <input id="userPrincipalName" name="userPrincipalName"
-                   type="email" autocomplete="username" maxlength="254" required>
-          </div>
-          <div class="form-group">
-            <label for="employeeId">Employee ID</label>
-            <input id="employeeId" name="employeeId"
-                   type="text" autocomplete="off" maxlength="64" required>
-          </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Request manager approval</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="card mt-md hidden" id="v2StatusPanel" aria-live="polite">
-        <h2 class="card-section-title">Onboarding status</h2>
-        <p id="v2StatusMessage">Checking your request...</p>
-        <div id="v2ActionPanel"></div>
-      </section>
-
-      <section class="card mt-md hidden" id="v2CredentialPanel" aria-live="polite">
-        <h2 class="card-section-title" id="v2CredentialTitle">Verified ID request</h2>
-        <div id="v2QrContainer"></div>
-        <p><a id="v2DeepLink" class="btn btn-secondary" rel="noopener">Open Microsoft Authenticator</a></p>
-        <div id="v2PinPanel" class="hidden">
-          <p>Enter this one-time issuance PIN in Authenticator:</p>
-          <p><code id="v2PinValue"></code></p>
-        </div>
-      </section>
-    </div>
-  </main>
-  <%- include('partials/footer') %>
-  <script src="/js/v2-onboarding.js" defer></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">Self-Service Verified ID Onboarding</h1>
+        <p class="page-subtitle">
+          This portal now uses a single manager-approved onboarding flow: submit
+          your tenant sign-in and employee ID, wait for your current Entra
+          manager to approve, then finish Verified ID issuance, presentation,
+          Temporary Access Pass sign-in, and tenant passkey registration.
+        </p>
+      </div>
+
+      <section class="card" id="v2IntakePanel">
+        <h2 class="card-section-title">Start onboarding</h2>
+        <form id="v2IntakeForm">
+          <div class="form-group">
+            <label for="userPrincipalName">Tenant user principal name</label>
+            <input id="userPrincipalName" name="userPrincipalName"
+                   type="email" autocomplete="username" maxlength="254" required>
+          </div>
+          <div class="form-group">
+            <label for="employeeId">Employee ID</label>
+            <input id="employeeId" name="employeeId"
+                   type="text" autocomplete="off" maxlength="64" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Request manager approval</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card mt-md hidden" id="v2StatusPanel" aria-live="polite">
+        <h2 class="card-section-title">Onboarding status</h2>
+        <p id="v2StatusMessage">Checking your request...</p>
+        <div id="v2ActionPanel"></div>
+      </section>
+
+      <section class="card mt-md hidden" id="v2CredentialPanel" aria-live="polite">
+        <h2 class="card-section-title" id="v2CredentialTitle">Verified ID request</h2>
+        <div id="v2QrContainer"></div>
+        <p><a id="v2DeepLink" class="btn btn-secondary" rel="noopener">Open Microsoft Authenticator</a></p>
+        <div id="v2PinPanel" class="hidden">
+          <p>Enter this one-time issuance PIN in Authenticator:</p>
+          <p><code id="v2PinValue"></code></p>
+        </div>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-onboarding.js" defer></script>
+</body>
+</html>

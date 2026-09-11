@@ -19,10 +19,17 @@ const {
 
 let originalV2;
 let originalTenantId;
+let originalDemoMode;
+
+function read(relativePath) {
+  return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+}
 
 test.beforeEach(() => {
   originalV2 = structuredClone(config.selfServiceV2);
   originalTenantId = config.azure.tenantId;
+  originalDemoMode = config.demoMode;
+  config.demoMode = false;
   config.azure.tenantId = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
   config.selfServiceV2.protectionKey = Buffer.alloc(32, 9).toString('base64');
   Object.assign(config.selfServiceV2.verifiedId, {
@@ -42,15 +49,13 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
+  config.demoMode = originalDemoMode;
   config.azure.tenantId = originalTenantId;
   config.selfServiceV2 = originalV2;
 });
 
 test('builds the exact employee and manager expansion query', async () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'services', 'graph-service.js'),
-    'utf8'
-  );
+  const source = read('src/services/graph-service.js');
   assert.match(
     source,
     /\$select: 'id,displayName,userPrincipalName,employeeId,accountEnabled'/
@@ -211,24 +216,24 @@ test('validates manager OIDC tid, oid, audience, issuer, nonce, and time', () =>
   );
 });
 
-test('exposes every v2 route behind the independent feature gate', () => {
-  const app = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'app.js'),
-    'utf8'
-  );
-  const sources = [
-    'v2-onboarding.js',
-    'v2-verified-id.js',
-    'v2-manager.js',
-    'v2-passkey.js',
-  ].map((file) => fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', file),
-    'utf8'
-  )).join('\n');
+test('exposes only the canonical v2 routes and root redirect', () => {
+  const appSource = read('src/app.js');
+  const configSource = read('src/config.js');
+  const onboardingSource = read('src/routes/v2-onboarding.js');
+  const managerSource = read('src/routes/v2-manager.js');
+  const verifiedIdSource = read('src/routes/v2-verified-id.js');
+  const passkeySource = read('src/routes/v2-passkey.js');
+  const routes = [onboardingSource, managerSource, verifiedIdSource, passkeySource].join('\n');
 
-  assert.match(app, /app\.use\('\/v2', requireV2Enabled/);
-  assert.match(app, /app\.use\('\/api\/v2', requireV2Enabled/);
-  assert.match(app, /app\.use\('\/auth\/manager', requireV2Enabled/);
+  assert.match(appSource, /res\.redirect\('\/v2\/onboarding'\)/);
+  assert.match(appSource, /app\.use\('\/', v2OnboardingRouter\)/);
+  assert.match(appSource, /app\.use\('\/', v2VerifiedIdRouter\)/);
+  assert.match(appSource, /app\.use\('\/', v2ManagerRouter\)/);
+  assert.match(appSource, /app\.use\('\/', v2PasskeyRouter\)/);
+  assert.doesNotMatch(appSource, /requireV2Enabled/);
+  assert.doesNotMatch(appSource, /indexRouter|onboardingRouter|invitationsRouter|recoveryRouter|verificationRouter|passkeyRouter/);
+  assert.doesNotMatch(configSource, /ASSURANCE_MODE|SELF_SERVICE_V2_ENABLED|ONBOARDING_APPROVAL_API_KEY|INVITATION_LIFETIME_MINUTES|INVITATION_MAX_ATTEMPTS/);
+
   [
     '/v2/onboarding',
     '/api/v2/onboarding/requests',
@@ -245,7 +250,9 @@ test('exposes every v2 route behind the independent feature gate', () => {
     '/v2/passkey',
     '/api/v2/passkey/confirm',
     '/v2/complete',
-  ].forEach((route) => assert.match(sources, new RegExp(
+  ].forEach((route) => assert.match(routes, new RegExp(
     route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   )));
+
+  assert.match(onboardingSource, /\/v2\/manager\/approval#token=/);
 });
