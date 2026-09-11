@@ -35,6 +35,15 @@ function isBoolean(value) {
   return String(value || '').toLowerCase() === 'true';
 }
 
+function isEmailAddress(value) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || ''));
+}
+
+function isAcsConnectionString(value) {
+  return /^endpoint=https:\/\/[^;]+;accesskey=[^;\s]+;?$/i
+    .test(String(value || ''));
+}
+
 function isProtectionKey(value) {
   try {
     return Buffer.from(String(value || ''), 'base64').length === 32;
@@ -157,6 +166,12 @@ const config = {
     },
     notification: {
       provider: process.env.V2_MANAGER_NOTIFICATION_PROVIDER || 'noop',
+      acs: {
+        endpoint: process.env.V2_ACS_EMAIL_ENDPOINT || '',
+        connectionString:
+          process.env.V2_ACS_EMAIL_CONNECTION_STRING || '',
+        senderAddress: process.env.V2_ACS_EMAIL_SENDER_ADDRESS || '',
+      },
     },
   },
 
@@ -299,6 +314,34 @@ function validateRuntimeConfiguration() {
     if (v2.verifiedId.issuancePinLength < 4 ||
         v2.verifiedId.issuancePinLength > 16) {
       errors.push('V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH must be between 4 and 16.');
+    }
+    if (!['noop', 'acs'].includes(v2.notification.provider)) {
+      errors.push(
+        'V2_MANAGER_NOTIFICATION_PROVIDER must be noop or acs.'
+      );
+    }
+    if (v2.notification.provider === 'acs') {
+      const acs = v2.notification.acs;
+      if (!isEmailAddress(acs.senderAddress)) {
+        errors.push(
+          'V2_ACS_EMAIL_SENDER_ADDRESS must be a valid verified sender address.'
+        );
+      }
+      if (!isHttpsUrl(acs.endpoint) && !acs.connectionString) {
+        errors.push(
+          'V2_ACS_EMAIL_ENDPOINT or V2_ACS_EMAIL_CONNECTION_STRING is required for ACS email.'
+        );
+      }
+      if (acs.endpoint && !isHttpsUrl(acs.endpoint)) {
+        errors.push('V2_ACS_EMAIL_ENDPOINT must use HTTPS.');
+      }
+      if (!acs.endpoint &&
+          acs.connectionString &&
+          !isAcsConnectionString(acs.connectionString)) {
+        errors.push(
+          'V2_ACS_EMAIL_CONNECTION_STRING must contain an HTTPS endpoint and access key.'
+        );
+      }
     }
   }
 

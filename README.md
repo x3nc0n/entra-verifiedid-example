@@ -101,11 +101,14 @@ The approval endpoint returns the invitation URL but does not send email. Connec
 it to an approved manager workflow and email provider; do not expose the endpoint
 directly to browsers.
 
-No transactional email resource is currently approved for v2. The implemented
-`noop` notification provider logs only redacted request/correlation identifiers,
-records the delivery failure durably, and does not expose the approval URL. A
-real manager notification provider requires an explicit service decision and
-provisioning before live v2 use.
+V2 manager notifications support Azure Communication Services Email. The `acs`
+provider sends the approval link only to the manager mailbox returned by Graph.
+It prefers the ACS HTTPS endpoint plus the runtime managed identity and supports
+a connection-string fallback. Send failures are logged without recipient or
+approval-link data, recorded durably, and do not transition the request to
+`manager-notified`; the approval token therefore cannot be activated. The
+`noop` provider remains available for tests and intentionally does not expose
+the approval URL.
 
 Production startup is fail-closed unless demo mode is off, the dedicated pilot
 group object ID is configured, and the Azure Table state backend is available.
@@ -260,7 +263,10 @@ email.
 | `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM` | v2 | None | Employee-ID claim path in issued/presented credential. |
 | `V2_VERIFIED_ID_LINKED_DOMAIN` | v2 | None | Exact verified linked domain required from presentation. |
 | `V2_VERIFIED_ID_CALLBACK_API_KEY` | v2 | None | Shared callback authentication value. |
-| `V2_MANAGER_NOTIFICATION_PROVIDER` | v2 | `noop` | Approved manager notification adapter; only `noop` currently exists. |
+| `V2_MANAGER_NOTIFICATION_PROVIDER` | v2 | `noop` | `acs` for live ACS Email delivery or `noop` for tests. |
+| `V2_ACS_EMAIL_ENDPOINT` | v2 ACS managed identity | None | ACS HTTPS endpoint. Preferred over a connection string. |
+| `V2_ACS_EMAIL_SENDER_ADDRESS` | v2 ACS | None | Verified sender address on the connected ACS Email domain. |
+| `V2_ACS_EMAIL_CONNECTION_STRING` | v2 ACS fallback | None | Secret ACS connection string used only when no endpoint is configured. |
 | `FIDO2_RP_NAME` | Demo only | `Entra Verified ID Demo` | Local demo relying-party name. |
 | `FIDO2_RP_ID` | Demo only | `localhost` | Local demo relying-party ID. |
 
@@ -278,6 +284,55 @@ V2 records the narrower intended application-role names:
 `UserAuthMethod-Passkey.Read.All`. Tenant grants remain a separate provisioning
 step and are not performed by this application.
 
+### Definitive live v2 deployment contract
+
+The names below are the application contract. `MANAGER_APP_CLIENT_ID`,
+`MANAGER_APP_CLIENT_SECRET`, and `MANAGER_APP_REDIRECT_URI` are not read by the
+application and must not be used as aliases.
+
+| Exact environment variable | Classification | Required live value |
+|---|---|---|
+| `NODE_ENV` | Plain config | `production`. |
+| `DEMO_MODE` | Plain config | `false`. |
+| `APP_BASE_URL` | Plain config | Public HTTPS origin, without a path. |
+| `SESSION_SECRET` | **Secret** | High-entropy Express session signing secret. |
+| `SELF_SERVICE_V2_ENABLED` | Plain config | `true`. |
+| `ASSURANCE_MODE` | Plain config | `self-service-verified-id-v2` when v2 should own `/`; otherwise another valid mode may remain the default while `/v2` stays enabled. |
+| `AZURE_TENANT_ID` | Plain config | Tenant GUID. |
+| `AZURE_CLIENT_ID` | Plain config | Runtime user-assigned managed identity client ID. May be omitted only when intentionally using the Container App system-assigned identity for Graph, Table, Verified ID, and ACS. |
+| `PILOT_GROUP_ID` | Plain config | Dedicated pilot group object-ID GUID. |
+| `ONBOARDING_STATE_BACKEND` | Plain config | `azure-table`. |
+| `AZURE_STORAGE_TABLE_ENDPOINT` | Plain config | HTTPS Table service endpoint. |
+| `ONBOARDING_INVITATIONS_TABLE` | Plain config | Optional; defaults to `onboardingInvitations`. Still validated because v1 remains mounted. |
+| `ONBOARDING_SESSIONS_TABLE` | Plain config | Optional; defaults to `onboardingSessions`. |
+| `ONBOARDING_V2_REQUESTS_TABLE` | Plain config | Optional; defaults to `onboardingV2Requests`. |
+| `V2_TRANSIENT_PROTECTION_KEY` | **Secret** | Standard base64 encoding of exactly 32 decoded bytes. |
+| `V2_MANAGER_OIDC_CLIENT_ID` | Plain config | Dedicated single-tenant manager OIDC application client-ID GUID. |
+| `V2_MANAGER_OIDC_CLIENT_SECRET` | **Secret** | Manager OIDC confidential-client secret value. |
+| `V2_MANAGER_OIDC_REDIRECT_URI` | Plain config | Exact registered HTTPS URI ending in `/auth/manager/callback`. Defaults from `APP_BASE_URL`, but set it explicitly in live deployments. |
+| `V2_VERIFIED_ID_AUTHORITY` | Plain config | Exact tenant authority DID. |
+| `V2_VERIFIED_ID_MANIFEST_URL` | Plain config | HTTPS manifest URL for the dedicated v2 contract. |
+| `V2_VERIFIED_ID_CREDENTIAL_TYPE` | Plain config | Exact dedicated credential type. |
+| `V2_VERIFIED_ID_OBJECT_ID_CLAIM` | Plain config | Exact object-ID claim name/path in the contract. |
+| `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM` | Plain config | Exact employee-ID claim name/path in the contract. |
+| `V2_VERIFIED_ID_LINKED_DOMAIN` | Plain config | Exact verified hostname, without scheme or path. |
+| `V2_VERIFIED_ID_CALLBACK_API_KEY` | **Secret** | High-entropy shared value sent and validated in the Request Service callback header. |
+| `V2_MANAGER_NOTIFICATION_PROVIDER` | Plain config | `acs` for live delivery. `noop` is test-only. |
+| `V2_ACS_EMAIL_ENDPOINT` | Plain config | ACS resource HTTPS endpoint for managed-identity authentication. Preferred live mode. |
+| `V2_ACS_EMAIL_SENDER_ADDRESS` | Plain config | Verified ACS Email sender address. |
+| `V2_ACS_EMAIL_CONNECTION_STRING` | **Secret, optional fallback** | ACS `endpoint=https://...;accesskey=...` connection string. Set only instead of `V2_ACS_EMAIL_ENDPOINT` when managed-identity authentication cannot be used. If both are set, the endpoint/managed-identity path wins. |
+
+The following v2 variables are optional policy overrides and use the defaults in
+`.env.example`: `V2_REQUEST_LIFETIME_MINUTES`,
+`V2_MANAGER_TOKEN_LIFETIME_MINUTES`,
+`V2_MANAGER_PREAUTH_LIFETIME_MINUTES`,
+`V2_MAX_DAILY_REQUESTS_PER_UPN`, `V2_MAX_DAILY_REQUESTS_PER_IP`,
+`V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE`,
+`V2_MAX_PASSKEY_CONFIRM_ATTEMPTS`, `V2_MAX_ISSUANCE_RETRIES`,
+`V2_MAX_PRESENTATION_RETRIES`, `V2_MAX_VERIFICATION_FAILURES`,
+`V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH`, `TAP_LIFETIME_MINUTES`,
+`ENTRA_SECURITY_INFO_URL`, and `VC_SERVICE_SCOPE`.
+
 ## Azure delivery
 
 The repository's existing delivery path remains:
@@ -291,6 +346,19 @@ The repository's existing delivery path remains:
 
 The Deploy to Azure button is evaluation-only. The real application image arrives
 through the ACR/GitHub Actions flow.
+
+`deploy.yml` does **not** build images for feature-branch pushes. Pull requests
+run `.github/workflows/validate.yml` only. Merging to `main` triggers
+`deploy.yml`, which builds and pushes both `<commit-sha>` and `latest` with
+`az acr build`, deploys staging, and then deploys production subject to GitHub
+Environment approval. A manual `workflow_dispatch` of `deploy.yml` can build a
+selected branch/ref before merge. No separate local `docker build` is required.
+
+The current deploy workflow still configures `ASSURANCE_MODE=invitation` and
+does not map the v2 secrets or variables listed above. Building the image alone
+therefore does not enable v2. Switch/Trinity must wire the definitive contract
+to the Container App, or update the deployment workflow/environment mappings,
+before setting `SELF_SERVICE_V2_ENABLED=true`.
 
 ## Required integration work before live use
 
@@ -319,9 +387,10 @@ through the ACR/GitHub Actions flow.
    matching rules.
 7. Before enabling v2, provision the dedicated manager OIDC app, Verified ID
    contract/manifest, callback key, transient-protection key, v2 Azure Table and
-   table-level RBAC, granular Graph app roles, and an explicitly approved
-   transactional manager-notification integration. These inputs are pending
-   tenant provisioning; this repository contains placeholders only.
+   table-level RBAC, granular Graph app roles, and ACS Email configuration.
+   Grant the selected runtime managed identity the ACS email sender role when
+   using `V2_ACS_EMAIL_ENDPOINT`; otherwise map the connection string as a
+   Key Vault-backed secret.
 
 See [`docs/architecture.md`](docs/architecture.md) and [SECURITY.md](SECURITY.md).
 
