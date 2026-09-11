@@ -143,7 +143,7 @@ jobs:
               "V2_VERIFIED_ID_LINKED_DOMAIN=${{ vars.V2_VERIFIED_ID_LINKED_DOMAIN }}" \
               "V2_VERIFIED_ID_CALLBACK_API_KEY=secretref:v2-verified-id-callback-api-key" \
               "V2_MANAGER_NOTIFICATION_PROVIDER=${{ vars.V2_MANAGER_NOTIFICATION_PROVIDER }}" \
-              "V2_ACS_EMAIL_CONNECTION_STRING=secretref:acs-email-connection-string" \
+              "V2_ACS_EMAIL_ENDPOINT=secretref:acs-email-endpoint" \
               "V2_ACS_EMAIL_SENDER_ADDRESS=secretref:acs-email-sender-address" \
               "ONBOARDING_V2_REQUESTS_TABLE=${{ vars.ONBOARDING_V2_REQUESTS_TABLE }}" \
             --only-show-errors
@@ -288,7 +288,7 @@ jobs:
               "V2_VERIFIED_ID_LINKED_DOMAIN=${{ vars.V2_VERIFIED_ID_LINKED_DOMAIN }}" \
               "V2_VERIFIED_ID_CALLBACK_API_KEY=secretref:v2-verified-id-callback-api-key" \
               "V2_MANAGER_NOTIFICATION_PROVIDER=${{ vars.V2_MANAGER_NOTIFICATION_PROVIDER }}" \
-              "V2_ACS_EMAIL_CONNECTION_STRING=secretref:acs-email-connection-string" \
+              "V2_ACS_EMAIL_ENDPOINT=secretref:acs-email-endpoint" \
               "V2_ACS_EMAIL_SENDER_ADDRESS=secretref:acs-email-sender-address" \
               "ONBOARDING_V2_REQUESTS_TABLE=${{ vars.ONBOARDING_V2_REQUESTS_TABLE }}" \
             --only-show-errors
