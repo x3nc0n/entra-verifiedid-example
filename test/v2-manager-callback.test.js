@@ -66,7 +66,6 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     redeemManagerToken: onboardingService.redeemManagerToken,
     recordManagerRedemptionFailure: onboardingService.recordManagerRedemptionFailure,
     exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
-    getEmployeeWithManager: graphService.getEmployeeWithManager,
   };
 
   let redeemInput = null;
@@ -89,12 +88,6 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
-  });
-  graphService.getEmployeeWithManager = async () => ({
-    id: '12345678-1234-1234-1234-1234567890ab',
-    manager: {
-      id: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
-    },
   });
   onboardingService.redeemManagerToken = async (input) => {
     redeemInput = input;
@@ -120,10 +113,84 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
       redeemInput.managerObjectId,
       'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
     );
-    assert.equal(
-      redeemInput.authorizedManagerObjectId,
-      'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(onboardingService, {
+      loadManagerAuthFlow: originals.loadManagerAuthFlow,
+      redeemManagerToken: originals.redeemManagerToken,
+      recordManagerRedemptionFailure: originals.recordManagerRedemptionFailure,
+    });
+    Object.assign(managerAuthService, {
+      exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
+    });
+  }
+});
+
+test('manager callback records mismatch diagnostics after a genuine authorization failure', async () => {
+  const originals = {
+    loadManagerAuthFlow: onboardingService.loadManagerAuthFlow,
+    redeemManagerToken: onboardingService.redeemManagerToken,
+    recordManagerRedemptionFailure: onboardingService.recordManagerRedemptionFailure,
+    exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+    getEmployeeWithManager: graphService.getEmployeeWithManager,
+    warn: console.warn,
+  };
+
+  let recordedFailure = null;
+  const warnings = [];
+  onboardingService.loadManagerAuthFlow = async () => ({
+    nonce: 'expected-nonce',
+    codeVerifier: 'expected-verifier',
+    request: {
+      requestId: '11111111-2222-3333-4444-555555555555',
+      correlationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+      employeeObjectId: '12345678-1234-1234-1234-1234567890ab',
+      employeeUserPrincipalName: 'employee@tenant.example',
+      managerObjectId: '99999999-9999-9999-9999-999999999999',
+      managerTokenHash: 'a'.repeat(64),
+      managerAuthState: 'expected-state',
+    },
+  });
+  managerAuthService.exchangeAuthorizationCode = async () => ({
+    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+  });
+  onboardingService.redeemManagerToken = async () => {
+    throw new onboardingService.V2StateError(
+      'The signed-in manager is not authorized for this request.',
+      'manager_not_authorized',
+      403
     );
+  };
+  onboardingService.recordManagerRedemptionFailure = async (requestId, code) => {
+    recordedFailure = { requestId, code };
+  };
+  graphService.getEmployeeWithManager = async () => ({
+    id: '12345678-1234-1234-1234-1234567890ab',
+    manager: {
+      id: 'cccccccc-1111-2222-3333-dddddddddddd',
+    },
+  });
+  console.warn = (message) => warnings.push(message);
+
+  const app = createApp();
+  const server = app.listen(0);
+
+  try {
+    const response = await sendForm(server, '/auth/manager/callback', {
+      state: 'state-from-idp',
+      code: 'authorization-code',
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.deepEqual(recordedFailure, {
+      requestId: '11111111-2222-3333-4444-555555555555',
+      code: 'manager_not_authorized',
+    });
+    assert.match(warnings.join('\n'), /Manager callback authorization mismatch/);
+    assert.doesNotMatch(warnings.join('\n'), /aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb/);
+    assert.doesNotMatch(warnings.join('\n'), /cccccccc-1111-2222-3333-dddddddddddd/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     Object.assign(onboardingService, {
@@ -137,5 +204,6 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     Object.assign(graphService, {
       getEmployeeWithManager: originals.getEmployeeWithManager,
     });
+    console.warn = originals.warn;
   }
 });

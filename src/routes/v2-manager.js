@@ -131,9 +131,10 @@ router.post('/auth/manager/callback', async (req, res) => {
     });
   }
 
+  let authenticatedManager = null;
   try {
     const flow = await onboardingService.loadManagerAuthFlow(req.body.state);
-    const manager = await managerAuthService.exchangeAuthorizationCode({
+    authenticatedManager = await managerAuthService.exchangeAuthorizationCode({
       code: req.body.code,
       state: req.body.state,
       expectedState: flow.request.managerAuthState,
@@ -141,71 +142,17 @@ router.post('/auth/manager/callback', async (req, res) => {
       codeVerifier: flow.codeVerifier,
       authorizationPayload: req.body,
     });
-    const employee = await graphService.getEmployeeWithManager(
-      flow.request.employeeUserPrincipalName
-    );
-    if (!employee ||
-        !timingSafeTextEqual(
-          String(employee.id).toLowerCase(),
-          String(flow.request.employeeObjectId).toLowerCase()
-        ) ||
-        !employee.manager?.id) {
-      logManagerAuthorizationDiagnostics('Manager callback could not verify employee binding', {
-        requestId: flow.request.requestId,
-        correlationId: flow.request.correlationId,
-        employeeObjectId: flow.request.employeeObjectId,
-        graphEmployeeObjectId: employee?.id,
-        storedManagerObjectId: flow.request.managerObjectId,
-      });
-      throw new onboardingService.V2StateError(
-        'The current employee-to-manager relationship could not be verified.',
-        'manager_relationship_changed',
-        409
-      );
-    }
-    if (!timingSafeTextEqual(
-      String(manager.objectId).toLowerCase(),
-      String(employee.manager.id).toLowerCase()
-    )) {
-      logManagerAuthorizationDiagnostics('Manager callback object ID mismatch', {
-        requestId: flow.request.requestId,
-        correlationId: flow.request.correlationId,
-        storedManagerObjectId: flow.request.managerObjectId,
-        graphManagerObjectId: employee.manager.id,
-        signedInManagerObjectId: manager.objectId,
-        requestTenantId: flow.request.tenantId,
-        signedInTenantId: manager.tenantId,
-      });
-      throw new onboardingService.V2StateError(
-        'The signed-in account is not the current manager for this request.',
-        'manager_not_authorized',
-        403
-      );
-    }
-    if (!timingSafeTextEqual(
-      String(flow.request.managerObjectId).toLowerCase(),
-      String(employee.manager.id).toLowerCase()
-    )) {
-      logManagerAuthorizationDiagnostics('Manager callback repaired stale manager binding', {
-        requestId: flow.request.requestId,
-        correlationId: flow.request.correlationId,
-        storedManagerObjectId: flow.request.managerObjectId,
-        graphManagerObjectId: employee.manager.id,
-        signedInManagerObjectId: manager.objectId,
-      });
-    }
     await onboardingService.redeemManagerToken({
       requestId: flow.request.requestId,
       tokenHash: flow.request.managerTokenHash,
-      managerObjectId: manager.objectId,
-      authorizedManagerObjectId: employee.manager.id,
-      tenantId: manager.tenantId,
+      managerObjectId: authenticatedManager.objectId,
+      tenantId: authenticatedManager.tenantId,
     });
     await regenerateSession(req);
     req.session.v2Manager = {
       requestId: flow.request.requestId,
-      managerObjectId: manager.objectId,
-      tenantId: manager.tenantId,
+      managerObjectId: authenticatedManager.objectId,
+      tenantId: authenticatedManager.tenantId,
       authenticatedAt: new Date().toISOString(),
     };
     getCsrfToken(req, 'manager');
@@ -215,6 +162,22 @@ router.post('/auth/manager/callback', async (req, res) => {
       const flow = await onboardingService.loadManagerAuthFlow(req.body.state)
         .catch(() => null);
       if (flow) {
+        if (err.code === 'manager_not_authorized') {
+          const graphEmployee = await graphService.getEmployeeWithManager(
+            flow.request.employeeUserPrincipalName
+          ).catch(() => null);
+          logManagerAuthorizationDiagnostics('Manager callback authorization mismatch', {
+            requestId: flow.request.requestId,
+            correlationId: flow.request.correlationId,
+            storedEmployeeObjectId: flow.request.employeeObjectId,
+            graphEmployeeObjectId: graphEmployee?.id,
+            storedManagerObjectId: flow.request.managerObjectId,
+            graphManagerObjectId: graphEmployee?.manager?.id,
+            requestTenantId: flow.request.tenantId,
+            signedInManagerObjectId: authenticatedManager?.objectId,
+            signedInTenantId: authenticatedManager?.tenantId,
+          });
+        }
         await onboardingService.recordManagerRedemptionFailure(
           flow.request.requestId,
           err.code || 'manager_authentication_failed'

@@ -516,14 +516,12 @@ function createOnboardingV2Service(repository) {
 
   async function redeemManagerToken(input) {
     return updateRequest(input.requestId, ['manager-notified'], (current) => {
-      const authorizedManagerObjectId =
-        input.authorizedManagerObjectId || current.managerObjectId;
       if (current.managerTokenStatus !== 'active' ||
           Date.now() >= Date.parse(current.managerTokenExpiresAt) ||
           !timingSafeHashEqual(input.tokenHash, current.managerTokenHash) ||
           !timingSafeTextEqual(
             normalizeIdentifier(input.managerObjectId),
-            normalizeIdentifier(authorizedManagerObjectId)
+            normalizeIdentifier(current.managerObjectId)
           ) ||
           !timingSafeTextEqual(
             normalizeIdentifier(input.tenantId),
@@ -537,10 +535,11 @@ function createOnboardingV2Service(repository) {
       }
       return {
         ...current,
-        managerObjectId: authorizedManagerObjectId,
         managerTokenStatus: 'redeemed',
         managerTokenRedeemedAt: new Date().toISOString(),
         managerTokenAttemptCount: current.managerTokenAttemptCount + 1,
+        lastManagerAuthFailureCode: undefined,
+        lastManagerAuthFailureAt: undefined,
         managerAuthState: undefined,
         managerAuthNonceProtected: undefined,
         managerAuthVerifierProtected: undefined,
@@ -595,6 +594,7 @@ function createOnboardingV2Service(repository) {
       ...current,
       managerTokenAttemptCount: current.managerTokenAttemptCount + 1,
       lastManagerAuthFailureCode: code,
+      lastManagerAuthFailureAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
     await repository.writeAudit({

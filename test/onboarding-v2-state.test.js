@@ -161,7 +161,7 @@ test('redeems a manager token exactly once for the bound oid and tid', async () 
   assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
 });
 
-test('redeem can repair a stale stored manager binding after live Graph verification', async () => {
+test('successful redemption clears stale manager auth failure metadata', async () => {
   const created = await service.createRequest({
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     employee,
@@ -169,19 +169,21 @@ test('redeem can repair a stale stored manager binding after live Graph verifica
     employeeIdHash: hashNormalized(employee.employeeId),
   });
   await service.markManagerNotified(created.record.requestId, 'test');
+  await service.recordManagerRedemptionFailure(
+    created.record.requestId,
+    'manager_not_authorized'
+  );
   const activation = await service.activateManagerToken(created.managerToken);
-  repository.requests.get(created.record.requestId).managerObjectId =
-    '99999999-9999-9999-9999-999999999999';
 
   const redeemed = await service.redeemManagerToken({
     ...activation,
     managerObjectId: manager.id,
-    authorizedManagerObjectId: manager.id,
     tenantId: created.record.tenantId,
   });
 
   assert.equal(redeemed.managerTokenStatus, 'redeemed');
-  assert.equal(redeemed.managerObjectId, manager.id);
+  assert.equal(redeemed.lastManagerAuthFailureCode, undefined);
+  assert.equal(redeemed.lastManagerAuthFailureAt, undefined);
 });
 
 test('persists manager PKCE correlation encrypted and clears it on redemption', async () => {
