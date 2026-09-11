@@ -161,6 +161,31 @@ test('redeems a manager token exactly once for the bound oid and tid', async () 
   assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
 });
 
+test('successful redemption clears stale manager auth failure metadata', async () => {
+  const created = await service.createRequest({
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    employee,
+    manager,
+    employeeIdHash: hashNormalized(employee.employeeId),
+  });
+  await service.markManagerNotified(created.record.requestId, 'test');
+  await service.recordManagerRedemptionFailure(
+    created.record.requestId,
+    'manager_not_authorized'
+  );
+  const activation = await service.activateManagerToken(created.managerToken);
+
+  const redeemed = await service.redeemManagerToken({
+    ...activation,
+    managerObjectId: manager.id,
+    tenantId: created.record.tenantId,
+  });
+
+  assert.equal(redeemed.managerTokenStatus, 'redeemed');
+  assert.equal(redeemed.lastManagerAuthFailureCode, undefined);
+  assert.equal(redeemed.lastManagerAuthFailureAt, undefined);
+});
+
 test('persists manager PKCE correlation encrypted and clears it on redemption', async () => {
   const created = await service.createRequest({
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',

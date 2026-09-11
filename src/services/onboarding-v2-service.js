@@ -538,6 +538,8 @@ function createOnboardingV2Service(repository) {
         managerTokenStatus: 'redeemed',
         managerTokenRedeemedAt: new Date().toISOString(),
         managerTokenAttemptCount: current.managerTokenAttemptCount + 1,
+        lastManagerAuthFailureCode: undefined,
+        lastManagerAuthFailureAt: undefined,
         managerAuthState: undefined,
         managerAuthNonceProtected: undefined,
         managerAuthVerifierProtected: undefined,
@@ -592,6 +594,7 @@ function createOnboardingV2Service(repository) {
       ...current,
       managerTokenAttemptCount: current.managerTokenAttemptCount + 1,
       lastManagerAuthFailureCode: code,
+      lastManagerAuthFailureAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
     await repository.writeAudit({

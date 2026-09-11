@@ -2,13 +2,14 @@
   <div class="container">
     <section class="card">
       <h1 class="page-title"><%= heading || title %></h1>
-      <div class="alert alert-error"><%= error?.message || message %></div>
-      <% if (message && (!error || message !== error.message)) { %>
-        <p><%= message %></p>
-      <% } %>
-      <% if (actionHref && actionLabel) { %>
-        <p><a class="btn btn-primary" href="<%= actionHref %>"><%= actionLabel %></a></p>
-      <% } %>
+      <% const statusError = typeof error !== 'undefined' ? error : null; %>
+      <div class="alert alert-error"><%= statusError ? statusError.message : message %></div>
+      <% if (message && (!statusError || message !== statusError.message)) { %>
+        <p><%= message %></p>
+      <% } %>
+      <% if (actionHref && actionLabel) { %>
+        <p><a class="btn btn-primary" href="<%= actionHref %>"><%= actionLabel %></a></p>
+      <% } %>
     </section>
   </div>
 </main>

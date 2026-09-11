@@ -155,7 +155,7 @@ test('renders 404 and error handlers from the dedicated status view', () => {
 
   assert.match(appSource, /render\('status'/);
   assert.doesNotMatch(appSource, /render\('index'/);
-  assert.match(statusView, /error\?\.message \|\| message/);
+  assert.match(statusView, /typeof error !== 'undefined'/);
   assert.match(appSource, /Return to onboarding/);
   assert.match(appSource, /Restart onboarding/);
 });
