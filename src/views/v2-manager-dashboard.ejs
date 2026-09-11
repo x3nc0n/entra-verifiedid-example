@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">Manager Dashboard</h1>
+        <p class="page-subtitle">
+          Managers can sign in, review direct reports, and generate onboarding invitations.
+        </p>
+      </div>
+
+      <section class="card">
+        <% if (typeof error !== 'undefined' && error) { %>
+          <div class="alert alert-error"><%= error %></div>
+        <% } %>
+
+        <% if (!authenticated) { %>
+          <p>Sign in with your tenant manager account to access your dashboard.</p>
+          <p><a class="btn btn-primary" href="/auth/manager/dashboard/signin">Sign in to dashboard</a></p>
+        <% } else { %>
+          <div class="alert alert-info">
+            Signed in as <strong><%= managerDisplayName || managerUpn %></strong>
+            <% if (managerUpn) { %>(<%= managerUpn %>)<% } %>
+          </div>
+
+          <form id="managerDashboardForm">
+            <div class="form-group">
+              <label class="form-label" for="directReportId">Direct report</label>
+              <select id="directReportId" name="directReportId" class="form-input" required>
+                <option value="">Select a direct report</option>
+                <% directReports.forEach((report) => { %>
+                  <option value="<%= report.id %>">
+                    <%= report.displayName || report.userPrincipalName %> — <%= report.userPrincipalName %>
+                  </option>
+                <% }) %>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Generate invitation</button>
+            </div>
+          </form>
+
+          <p id="managerDashboardStatus" class="mt-md" aria-live="polite"></p>
+          <section id="managerInviteResult" class="card mt-md hidden">
+            <h2 class="card-section-title">Invitation ready</h2>
+            <p>Send this link to the employee so they can verify their identity and continue onboarding.</p>
+            <p><code id="managerInviteUrl"></code></p>
+          </section>
+        <% } %>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-manager-dashboard.js" defer></script>
+</body>
+</html>

@@ -124,6 +124,57 @@ async function getEmployeeWithManager(userPrincipalName) {
   }
 }
 
+async function listDirectReports(managerObjectId, dependencies = {}) {
+  if (config.demoMode) {
+    return [
+      {
+        id: 'demo-user-id-00000000-0000-0000-0000-000000000001',
+        displayName: 'Demo User',
+        userPrincipalName: 'demo.user@tenant.example',
+        mail: 'demo.user@tenant.example',
+        employeeId: 'DEMO-001',
+        accountEnabled: true,
+      },
+      {
+        id: 'demo-user-id-00000000-0000-0000-0000-000000000003',
+        displayName: 'Second Demo User',
+        userPrincipalName: 'second.demo@tenant.example',
+        mail: 'second.demo@tenant.example',
+        employeeId: 'DEMO-002',
+        accountEnabled: true,
+      },
+    ];
+  }
+
+  const token = await (dependencies.getAccessToken || getAccessToken)();
+  const get = dependencies.get || axios.get.bind(axios);
+  const reports = [];
+  let nextUrl =
+    `${config.graph.baseUrl}/v1.0/users/${encodeURIComponent(managerObjectId)}` +
+    '/directReports/microsoft.graph.user';
+  let params = {
+    $select: 'id,displayName,userPrincipalName,mail,employeeId,accountEnabled',
+  };
+
+  while (nextUrl) {
+    // eslint-disable-next-line no-await-in-loop
+    const response = await get(nextUrl, {
+      params,
+      headers: authorizationHeaders(token),
+    });
+    for (const value of response.data.value || []) {
+      if (String(value['@odata.type'] || '#microsoft.graph.user')
+        .toLowerCase() === '#microsoft.graph.user') {
+        reports.push(value);
+      }
+    }
+    nextUrl = response.data['@odata.nextLink'] || null;
+    params = undefined;
+  }
+
+  return reports;
+}
+
 async function isUserInGroup(userId, groupId) {
   if (config.demoMode) return true;
 
@@ -346,6 +397,7 @@ module.exports = {
   getUserByPrincipalName,
   getUserById,
   getEmployeeWithManager,
+  listDirectReports,
   isUserInGroup,
   getEligiblePilotUser,
   createTemporaryAccessPass,

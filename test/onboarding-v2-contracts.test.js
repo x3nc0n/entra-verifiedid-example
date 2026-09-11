@@ -223,13 +223,21 @@ test('exposes only the canonical v2 routes and root redirect', () => {
   const managerSource = read('src/routes/v2-manager.js');
   const verifiedIdSource = read('src/routes/v2-verified-id.js');
   const passkeySource = read('src/routes/v2-passkey.js');
-  const routes = [onboardingSource, managerSource, verifiedIdSource, passkeySource].join('\n');
+  const recoverySource = read('src/routes/v2-recovery.js');
+  const routes = [
+    onboardingSource,
+    managerSource,
+    verifiedIdSource,
+    passkeySource,
+    recoverySource,
+  ].join('\n');
 
   assert.match(appSource, /res\.redirect\('\/v2\/onboarding'\)/);
   assert.match(appSource, /app\.use\('\/', v2OnboardingRouter\)/);
   assert.match(appSource, /app\.use\('\/', v2VerifiedIdRouter\)/);
   assert.match(appSource, /app\.use\('\/', v2ManagerRouter\)/);
   assert.match(appSource, /app\.use\('\/', v2PasskeyRouter\)/);
+  assert.match(appSource, /app\.use\('\/', v2RecoveryRouter\)/);
   assert.doesNotMatch(appSource, /requireV2Enabled/);
   assert.doesNotMatch(appSource, /indexRouter|onboardingRouter|invitationsRouter|recoveryRouter|verificationRouter|passkeyRouter/);
   assert.doesNotMatch(configSource, /ASSURANCE_MODE|SELF_SERVICE_V2_ENABLED|ONBOARDING_APPROVAL_API_KEY|INVITATION_LIFETIME_MINUTES|INVITATION_MAX_ATTEMPTS/);
@@ -238,15 +246,29 @@ test('exposes only the canonical v2 routes and root redirect', () => {
     '/v2/onboarding',
     '/api/v2/onboarding/requests',
     '/api/v2/onboarding/status',
+    '/v2/onboarding/invite',
+    '/api/v2/onboarding/invitations/activate',
+    '/api/v2/onboarding/invitations/confirm',
     '/api/v2/verified-id/issuance/requests',
     '/api/v2/verified-id/issuance/callback',
     '/api/v2/verified-id/presentation/requests',
     '/api/v2/verified-id/presentation/callback',
     '/v2/manager/approval',
+    '/v2/manager/dashboard',
     '/api/v2/manager-approvals/activate',
+    '/api/v2/manager/invitations',
     '/auth/manager/signin',
+    '/auth/manager/dashboard/signin',
     '/auth/manager/callback',
     '/api/v2/manager-approvals/:requestId/decision',
+    '/v2/recovery',
+    '/api/v2/recovery/requests',
+    '/api/v2/recovery/status',
+    '/api/v2/recovery/verified-id/presentation/requests',
+    '/api/v2/recovery/verified-id/presentation/callback',
+    '/v2/recovery/passkey',
+    '/api/v2/recovery/passkey/confirm',
+    '/v2/recovery/complete',
     '/v2/passkey',
     '/api/v2/passkey/confirm',
     '/v2/complete',
@@ -255,4 +277,5 @@ test('exposes only the canonical v2 routes and root redirect', () => {
   )));
 
   assert.match(onboardingSource, /\/v2\/manager\/approval#token=/);
+  assert.match(managerSource, /\/v2\/onboarding\/invite#token=/);
 });

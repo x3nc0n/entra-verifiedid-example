@@ -1,9 +1,11 @@
 'use strict';
 
 const express = require('express');
+const config = require('../config');
 const graphService = require('../services/graph-service');
 const managerAuthService = require('../services/manager-auth-service');
 const onboardingService = require('../services/onboarding-v2-service');
+const { hashNormalized } = require('../services/verified-subject-service');
 const {
   digestIdentifier,
   timingSafeTextEqual,
@@ -20,6 +22,19 @@ function preAuthIsActive(preAuth) {
   return preAuth?.requestId &&
     preAuth.tokenHash &&
     Date.now() < Date.parse(preAuth.expiresAt);
+}
+
+function dashboardAuthIsActive(auth) {
+  return auth?.state &&
+    auth?.nonce &&
+    auth?.codeVerifier &&
+    Date.now() < Date.parse(auth.expiresAt);
+}
+
+function dashboardSessionIsActive(session) {
+  return session?.managerObjectId &&
+    session?.tenantId &&
+    Date.now() < Date.parse(session.expiresAt || 0);
 }
 
 function logManagerAuthorizationDiagnostics(message, details = {}) {
@@ -71,6 +86,51 @@ router.get('/v2/manager/approval', async (req, res) => {
   });
 });
 
+router.get('/v2/manager/dashboard', async (req, res) => {
+  const dashboardSession = req.session.v2ManagerDashboard;
+  if (!dashboardSessionIsActive(dashboardSession)) {
+    delete req.session.v2ManagerDashboard;
+    return res.render('v2-manager-dashboard', {
+      title: 'Manager Dashboard',
+      csrfToken: getCsrfToken(req, 'manager-dashboard-bootstrap'),
+      authenticated: false,
+      directReports: [],
+      managerDisplayName: null,
+      managerUpn: null,
+    });
+  }
+
+  try {
+    const directReports = await graphService.listDirectReports(
+      dashboardSession.managerObjectId
+    );
+    return res.render('v2-manager-dashboard', {
+      title: 'Manager Dashboard',
+      csrfToken: getCsrfToken(req, 'manager-dashboard'),
+      authenticated: true,
+      directReports: directReports
+        .filter((report) => report.accountEnabled !== false)
+        .sort((left, right) =>
+          String(left.displayName || left.userPrincipalName)
+            .localeCompare(String(right.displayName || right.userPrincipalName))
+        ),
+      managerDisplayName: dashboardSession.displayName,
+      managerUpn: dashboardSession.userPrincipalName,
+    });
+  } catch (err) {
+    console.error('[v2-manager] Dashboard load failed.');
+    return res.status(503).render('v2-manager-dashboard', {
+      title: 'Manager Dashboard Unavailable',
+      csrfToken: getCsrfToken(req, 'manager-dashboard-bootstrap'),
+      authenticated: false,
+      directReports: [],
+      managerDisplayName: null,
+      managerUpn: null,
+      error: 'Manager dashboard is temporarily unavailable.',
+    });
+  }
+});
+
 router.post(
   '/api/v2/manager-approvals/activate',
   requireCsrf('manager-bootstrap'),
@@ -119,6 +179,28 @@ router.get('/auth/manager/signin', async (req, res) => {
   }
 });
 
+router.get('/auth/manager/dashboard/signin', async (req, res) => {
+  try {
+    const authorization = await managerAuthService.createAuthorizationRequest();
+    req.session.v2ManagerDashboardAuth = {
+      ...authorization,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    };
+    return res.redirect(authorization.url);
+  } catch (err) {
+    console.error('[v2-manager] Dashboard sign-in initialization failed.');
+    return res.status(503).render('v2-manager-dashboard', {
+      title: 'Manager Dashboard Unavailable',
+      csrfToken: getCsrfToken(req, 'manager-dashboard-bootstrap'),
+      authenticated: false,
+      directReports: [],
+      managerDisplayName: null,
+      managerUpn: null,
+      error: 'Manager sign-in is temporarily unavailable.',
+    });
+  }
+});
+
 router.post('/auth/manager/callback', async (req, res) => {
   if (!req.body.state || !req.body.code) {
     return res.status(400).render('v2-manager-approval', {
@@ -129,6 +211,47 @@ router.post('/auth/manager/callback', async (req, res) => {
       request: null,
       error: 'The manager sign-in session expired. Open the approval link again.',
     });
+  }
+
+  const dashboardAuth = req.session.v2ManagerDashboardAuth;
+  if (dashboardAuthIsActive(dashboardAuth) &&
+      timingSafeTextEqual(req.body.state, dashboardAuth.state)) {
+    try {
+      const authenticatedManager = await managerAuthService.exchangeAuthorizationCode({
+        code: req.body.code,
+        state: req.body.state,
+        expectedState: dashboardAuth.state,
+        expectedNonce: dashboardAuth.nonce,
+        codeVerifier: dashboardAuth.codeVerifier,
+        authorizationPayload: req.body,
+      });
+      const managerProfile = await graphService.getUserById(authenticatedManager.objectId);
+      await regenerateSession(req);
+      req.session.v2ManagerDashboard = {
+        managerObjectId: authenticatedManager.objectId,
+        tenantId: authenticatedManager.tenantId,
+        displayName: managerProfile?.displayName || authenticatedManager.displayName,
+        userPrincipalName: managerProfile?.userPrincipalName || null,
+        authenticatedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      };
+      getCsrfToken(req, 'manager-dashboard');
+      return res.redirect('/v2/manager/dashboard');
+    } catch (err) {
+      console.warn(
+        `[v2-manager] Dashboard authentication was rejected; code=${err.code || 'manager_dashboard_authentication_failed'}`
+      );
+      delete req.session.v2ManagerDashboardAuth;
+      return res.status(403).render('v2-manager-dashboard', {
+        title: 'Manager Dashboard Sign-In Rejected',
+        csrfToken: getCsrfToken(req, 'manager-dashboard-bootstrap'),
+        authenticated: false,
+        directReports: [],
+        managerDisplayName: null,
+        managerUpn: null,
+        error: 'The signed-in account could not access the manager dashboard.',
+      });
+    }
   }
 
   let authenticatedManager = null;
@@ -247,5 +370,66 @@ router.post(
   }
 );
 
+router.post(
+  '/api/v2/manager/invitations',
+  requireCsrf('manager-dashboard'),
+  async (req, res) => {
+    const dashboardSession = req.session.v2ManagerDashboard;
+    if (!dashboardSessionIsActive(dashboardSession)) {
+      delete req.session.v2ManagerDashboard;
+      return res.status(403).json({ error: 'Manager dashboard authorization is required.' });
+    }
+
+    try {
+      const directReports = await graphService.listDirectReports(
+        dashboardSession.managerObjectId
+      );
+      const employee = directReports.find((report) =>
+        timingSafeTextEqual(
+          String(report.id).toLowerCase(),
+          String(req.body.directReportId || '').trim().toLowerCase()
+        )
+      );
+      if (!employee || !employee.employeeId || employee.accountEnabled === false) {
+        return res.status(403).json({
+          error: 'The selected employee is not eligible for manager-initiated onboarding.',
+        });
+      }
+
+      const inviteLimit = await onboardingService.enforceRateLimit(
+        'manager-dashboard',
+        dashboardSession.managerObjectId,
+        config.selfServiceV2.maxDailyManagerInvitations
+      );
+      if (!inviteLimit.allowed) {
+        return res.status(429).json({
+          error: 'Daily manager invitation limit reached.',
+        });
+      }
+
+      await graphService.getEligiblePilotUser(employee.id);
+      const created = await onboardingService.createManagerInitiatedRequest({
+        tenantId: config.azure.tenantId,
+        manager: { id: dashboardSession.managerObjectId },
+        employee,
+        employeeIdHash: hashNormalized(employee.employeeId),
+      });
+      return res.status(201).json({
+        requestId: created.record.requestId,
+        inviteUrl:
+          `${config.appBaseUrl}/v2/onboarding/invite#token=` +
+          encodeURIComponent(created.employeeInviteToken),
+      });
+    } catch (err) {
+      console.warn(`[v2-manager] Dashboard invitation rejected; code=${err.code || 'invitation_error'}`);
+      return res.status(err.status || 409).json({
+        error: 'The manager invitation could not be created.',
+      });
+    }
+  }
+);
+
 module.exports = router;
 module.exports.preAuthIsActive = preAuthIsActive;
+module.exports.dashboardAuthIsActive = dashboardAuthIsActive;
+module.exports.dashboardSessionIsActive = dashboardSessionIsActive;

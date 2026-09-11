@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
 const graphService = require('../services/graph-service');
@@ -33,6 +34,7 @@ function coarseStatus(request) {
   const nextActions = {
     requested: 'await-manager-notification',
     'manager-notified': 'await-manager-decision',
+    'employee-invited': 'await-employee-confirmation',
     'manager-approved': 'request-credential',
     'manager-rejected': 'closed',
     'credential-issued': 'present-credential',
@@ -69,6 +71,13 @@ async function auditRejectedIntake(req, upn, reasonCode) {
   }
 }
 
+function invitePreAuthIsActive(preAuth) {
+  return preAuth?.requestId &&
+    preAuth.tokenHash &&
+    preAuth.employeeObjectId &&
+    Date.now() < Date.parse(preAuth.expiresAt);
+}
+
 router.get('/v2/onboarding', (req, res) => {
   const csrfToken = getCsrfToken(req, 'employee');
   return res.render('v2-onboarding', {
@@ -84,7 +93,7 @@ router.post(
     const userPrincipalName = normalizeUpn(req.body.userPrincipalName);
     const employeeId = String(req.body.employeeId || '').trim();
     req.session.v2IntakeCorrelationId =
-      req.session.v2IntakeCorrelationId || require('crypto').randomUUID();
+      req.session.v2IntakeCorrelationId || crypto.randomUUID();
 
     const genericResponse = () => res.status(202).json({
       accepted: true,
@@ -190,6 +199,119 @@ router.post(
   }
 );
 
+router.get('/v2/onboarding/invite', async (req, res) => {
+  const preAuth = req.session.v2EmployeeInvitePreAuth;
+  if (!invitePreAuthIsActive(preAuth)) {
+    delete req.session.v2EmployeeInvitePreAuth;
+    return res.render('v2-onboarding-invite', {
+      title: 'Manager Invitation',
+      csrfToken: getCsrfToken(req, 'employee-invite-bootstrap'),
+      activated: false,
+      request: null,
+    });
+  }
+
+  try {
+    const request = await onboardingService.loadRequest(preAuth.requestId);
+    return res.render('v2-onboarding-invite', {
+      title: 'Manager Invitation',
+      csrfToken: getCsrfToken(req, 'employee-invite'),
+      activated: true,
+      request: {
+        requestId: request.requestId,
+        employeeDisplayName: request.employeeDisplayName,
+      },
+    });
+  } catch (_) {
+    delete req.session.v2EmployeeInvitePreAuth;
+    return res.render('v2-onboarding-invite', {
+      title: 'Manager Invitation',
+      csrfToken: getCsrfToken(req, 'employee-invite-bootstrap'),
+      activated: false,
+      request: null,
+      error: 'This employee invitation is no longer active.',
+    });
+  }
+});
+
+router.post(
+  '/api/v2/onboarding/invitations/activate',
+  requireCsrf('employee-invite-bootstrap'),
+  async (req, res) => {
+    try {
+      const preAuth = await onboardingService.activateEmployeeInviteToken(req.body.token);
+      await regenerateSession(req);
+      req.session.v2EmployeeInvitePreAuth = preAuth;
+      getCsrfToken(req, 'employee-invite');
+      return res.status(204).end();
+    } catch (err) {
+      return res.status(err.status || 410).json({
+        error: 'This employee invitation link is invalid or expired.',
+      });
+    }
+  }
+);
+
+router.post(
+  '/api/v2/onboarding/invitations/confirm',
+  requireCsrf('employee-invite'),
+  async (req, res) => {
+    const preAuth = req.session.v2EmployeeInvitePreAuth;
+    if (!invitePreAuthIsActive(preAuth)) {
+      delete req.session.v2EmployeeInvitePreAuth;
+      return res.status(401).json({
+        error: 'Employee invitation verification is required.',
+      });
+    }
+
+    const userPrincipalName = normalizeUpn(req.body.userPrincipalName);
+    const employeeId = String(req.body.employeeId || '').trim();
+    if (!validIntake(userPrincipalName, employeeId)) {
+      return res.status(400).json({
+        error: 'Enter a valid tenant user principal name and employee ID.',
+      });
+    }
+
+    try {
+      const employee = await graphService.getEmployeeWithManager(userPrincipalName);
+      const submittedEmployeeHash = hashNormalized(employeeId);
+      const authoritativeEmployeeHash = hashNormalized(employee?.employeeId);
+      if (!employee?.employeeId ||
+          !timingSafeHashEqual(submittedEmployeeHash, authoritativeEmployeeHash)) {
+        throw new onboardingService.V2StateError(
+          'The employee invite confirmation did not match the bound employee.',
+          'employee_confirmation_failed',
+          403
+        );
+      }
+      await graphService.getEligiblePilotUser(preAuth.employeeObjectId);
+      const updated = await onboardingService.confirmEmployeeInvite({
+        requestId: preAuth.requestId,
+        tokenHash: preAuth.tokenHash,
+        employeeObjectId: employee?.id,
+        userPrincipalName,
+        employeeIdHash: submittedEmployeeHash,
+      });
+      await regenerateSession(req);
+      req.session.v2Employee = {
+        requestId: updated.requestId,
+        employeeObjectId: updated.employeeObjectId,
+      };
+      getCsrfToken(req, 'employee');
+      return res.status(204).end();
+    } catch (err) {
+      await onboardingService.recordEmployeeInviteFailure(
+        preAuth.requestId,
+        preAuth.tokenHash,
+        err.code || 'employee_confirmation_failed'
+      ).catch(() => {});
+      return res.status(err.status || 403).json({
+        error: 'The submitted employee identity did not match this invitation.',
+      });
+    }
+  }
+);
+
 router.get('/api/v2/onboarding/status', async (req, res) => {
   const requestId = req.session.v2Employee?.requestId;
   if (!requestId) return res.status(401).json({ error: 'No active onboarding session.' });
@@ -207,3 +329,4 @@ module.exports = router;
 module.exports.coarseStatus = coarseStatus;
 module.exports.normalizeUpn = normalizeUpn;
 module.exports.validIntake = validIntake;
+module.exports.invitePreAuthIsActive = invitePreAuthIsActive;

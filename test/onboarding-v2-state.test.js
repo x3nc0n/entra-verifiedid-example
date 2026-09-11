@@ -32,6 +32,8 @@ test.beforeEach(() => {
     requestLifetimeMinutes: config.selfServiceV2.requestLifetimeMinutes,
     managerTokenLifetimeMinutes:
       config.selfServiceV2.managerTokenLifetimeMinutes,
+    maxEmployeeInviteConfirmAttempts:
+      config.selfServiceV2.maxEmployeeInviteConfirmAttempts,
     maxIssuanceRetries: config.selfServiceV2.maxIssuanceRetries,
     maxPresentationRetries: config.selfServiceV2.maxPresentationRetries,
     maxVerificationFailures: config.selfServiceV2.maxVerificationFailures,
@@ -39,6 +41,7 @@ test.beforeEach(() => {
   config.selfServiceV2.protectionKey = Buffer.alloc(32, 7).toString('base64');
   config.selfServiceV2.requestLifetimeMinutes = 60;
   config.selfServiceV2.managerTokenLifetimeMinutes = 60;
+  config.selfServiceV2.maxEmployeeInviteConfirmAttempts = 2;
   config.selfServiceV2.maxIssuanceRetries = 3;
   config.selfServiceV2.maxPresentationRetries = 3;
   config.selfServiceV2.maxVerificationFailures = 3;
@@ -406,4 +409,58 @@ test('rate limits are durable repository counters rather than process globals', 
     (await service.enforceRateLimit('upn', 'employee@tenant.example', 2)).allowed,
     false
   );
+});
+
+test('manager-initiated invitations bind the employee and transition to manager-approved after confirmation', async () => {
+  const created = await service.createManagerInitiatedRequest({
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    employee,
+    manager,
+    employeeIdHash: hashNormalized(employee.employeeId),
+  });
+  const stored = await repository.getRequest(created.record.requestId);
+  assert.equal(stored.state, 'employee-invited');
+  assert.equal(stored.initiationMode, 'manager-initiated');
+  assert.notEqual(stored.employeeInviteTokenHash, created.employeeInviteToken);
+
+  const activation = await service.activateEmployeeInviteToken(created.employeeInviteToken);
+  const confirmed = await service.confirmEmployeeInvite({
+    ...activation,
+    userPrincipalName: employee.userPrincipalName,
+    employeeIdHash: hashNormalized(employee.employeeId),
+  });
+  assert.equal(confirmed.state, 'manager-approved');
+  assert.equal(confirmed.employeeInviteTokenStatus, 'redeemed');
+  assert.equal(confirmed.managerDecision, 'approve');
+});
+
+test('employee invite confirmation locks after repeated mismatches', async () => {
+  const created = await service.createManagerInitiatedRequest({
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    employee,
+    manager,
+    employeeIdHash: hashNormalized(employee.employeeId),
+  });
+  const activation = await service.activateEmployeeInviteToken(created.employeeInviteToken);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      service.confirmEmployeeInvite({
+        ...activation,
+        userPrincipalName: employee.userPrincipalName,
+        employeeObjectId: employee.id,
+        employeeIdHash: hashNormalized('WRONG-ID'),
+      }),
+      (err) => err.code === 'employee_confirmation_failed'
+    );
+    await service.recordEmployeeInviteFailure(
+      created.record.requestId,
+      activation.tokenHash,
+      'employee_confirmation_failed'
+    );
+  }
+
+  const locked = await repository.getRequest(created.record.requestId);
+  assert.equal(locked.state, 'locked');
+  assert.equal(locked.employeeInviteTokenAttemptCount, 2);
 });
