@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <section class="card">
+        <h1 class="page-title"><%= title %></h1>
+        <% if (typeof error !== 'undefined' && error) { %>
+          <div class="alert alert-error"><%= error %></div>
+        <% } else { %>
+          <p>This Temporary Access Pass is displayed once. Copy it now.</p>
+          <p><code id="v2TapValue"><%= temporaryAccessPass %></code></p>
+          <p>Configured for one use and <%= lifetimeInMinutes %> minutes.</p>
+          <p>
+            <a class="btn btn-primary" href="<%= securityInfoUrl %>"
+               target="_blank" rel="noopener noreferrer">
+              Open Microsoft Security Info
+            </a>
+          </p>
+          <p>After registering a passkey, return here and confirm it.</p>
+          <button id="v2ConfirmPasskey" class="btn btn-secondary">
+            Confirm passkey registration
+          </button>
+          <p id="v2PasskeyStatus" aria-live="polite"></p>
+        <% } %>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-passkey.js" defer></script>
+</body>
+</html>

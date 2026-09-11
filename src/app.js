@@ -16,17 +16,21 @@ const recoveryRouter = require('./routes/recovery');
 const recoveryRequestsRouter = require('./routes/recovery-requests');
 const verificationRouter = require('./routes/verification');
 const passkeyRouter = require('./routes/passkey');
+const v2OnboardingRouter = require('./routes/v2-onboarding');
+const v2VerifiedIdRouter = require('./routes/v2-verified-id');
+const v2ManagerRouter = require('./routes/v2-manager');
+const v2PasskeyRouter = require('./routes/v2-passkey');
 const verifiedIdService = require('./services/verified-id-service');
 const { createSessionStore } = require('./services/table-session-store');
+const {
+  requireV2Enabled,
+  setV2SecurityHeaders,
+} = require('./middleware/v2-security');
 
 function isUnsafeSecret(value) {
   return !value ||
     value === 'insecure-dev-secret-change-me' ||
     value.startsWith('PLACEHOLDER--');
-}
-
-if (!['invitation', 'verified-id'].includes(config.assurance.mode)) {
-  throw new Error('ASSURANCE_MODE must be invitation or verified-id.');
 }
 
 config.validateRuntimeConfiguration();
@@ -35,13 +39,17 @@ if (config.nodeEnv === 'production') {
   if (isUnsafeSecret(config.sessionSecret)) {
     throw new Error('SESSION_SECRET must be configured before production startup.');
   }
-  if (isUnsafeSecret(config.assurance.approvalApiKey)) {
+  if (config.assurance.mode !== 'self-service-verified-id-v2' &&
+      isUnsafeSecret(config.assurance.approvalApiKey)) {
     throw new Error(
       'ONBOARDING_APPROVAL_API_KEY must be configured before production startup.'
     );
   }
   if (config.assurance.mode === 'verified-id') {
     verifiedIdService.assertPresentationConfiguration();
+  }
+  if (config.selfServiceV2.enabled) {
+    verifiedIdService.assertV2Configuration();
   }
 }
 
@@ -114,6 +122,20 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
+app.use('/v2', requireV2Enabled, setV2SecurityHeaders);
+app.use('/api/v2', requireV2Enabled, setV2SecurityHeaders);
+app.use('/auth/manager', requireV2Enabled, setV2SecurityHeaders);
+app.use('/', v2OnboardingRouter);
+app.use('/', v2VerifiedIdRouter);
+app.use('/', v2ManagerRouter);
+app.use('/', v2PasskeyRouter);
+
+app.get('/', (req, res, next) => {
+  if (config.assurance.mode === 'self-service-verified-id-v2') {
+    return res.redirect('/v2/onboarding');
+  }
+  return next();
+});
 app.use('/', indexRouter);
 app.use('/onboarding', onboardingRouter);
 app.use('/api/invitations', invitationsRouter);

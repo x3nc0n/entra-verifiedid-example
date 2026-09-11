@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <section class="card" id="managerApprovalPanel"
+               data-activated="<%= activated ? 'true' : 'false' %>"
+               data-authenticated="<%= authenticated ? 'true' : 'false' %>"
+               data-request-id="<%= request?.requestId || '' %>">
+        <h1 class="page-title">Manager Approval</h1>
+        <% if (typeof error !== 'undefined' && error) { %>
+          <div class="alert alert-error"><%= error %></div>
+        <% } else if (authenticated && request) { %>
+          <p>
+            Review the onboarding request for
+            <strong><%= request.employeeDisplayName %></strong>
+            (<%= request.employeeUserPrincipalName %>).
+          </p>
+          <% if (request.state === 'manager-notified') { %>
+            <div class="form-actions">
+              <button id="managerApprove" class="btn btn-primary">Approve</button>
+              <button id="managerReject" class="btn btn-secondary">Reject</button>
+            </div>
+          <% } else { %>
+            <p>This request has already been decided or is no longer active.</p>
+          <% } %>
+          <p id="managerDecisionStatus" aria-live="polite"></p>
+        <% } else if (activated) { %>
+          <p>The approval link is active. Sign in with your tenant manager account.</p>
+          <p><a class="btn btn-primary" href="/auth/manager/signin">Sign in to review</a></p>
+        <% } else { %>
+          <p id="managerActivationStatus" aria-live="polite">
+            Validating the approval link...
+          </p>
+        <% } %>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-manager-approval.js" defer></script>
+</body>
+</html>

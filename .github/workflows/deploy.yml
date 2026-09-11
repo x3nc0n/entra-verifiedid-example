@@ -106,18 +106,42 @@ jobs:
             --secrets \
               "session-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/session-secret,identityref:system" \
               "onboarding-approval-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/onboarding-approval-key,identityref:system" \
+              "acs-email-connection-string=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/acs-email-connection-string,identityref:system" \
+              "acs-email-sender-address=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/acs-email-sender-address,identityref:system" \
+              "manager-app-client-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/manager-app-client-secret,identityref:system" \
+              "v2-transient-protection-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/v2-transient-protection-key,identityref:system" \
+              "v2-verified-id-callback-api-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/v2-verified-id-callback-api-key,identityref:system" \
             --only-show-errors
           az containerapp update \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --set-env-vars \
-              "ASSURANCE_MODE=invitation" \
+              "ASSURANCE_MODE=${{ vars.ASSURANCE_MODE }}" \
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
               "DEMO_MODE=false" \
               "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
               "ONBOARDING_STATE_BACKEND=azure-table" \
+              "AZURE_STORAGE_TABLE_ENDPOINT=${{ vars.AZURE_STORAGE_TABLE_ENDPOINT }}" \
+              "AZURE_TENANT_ID=${{ vars.AZURE_TENANT_ID }}" \
+              "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}" \
               "SESSION_SECRET=secretref:session-secret" \
               "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
+              "SELF_SERVICE_V2_ENABLED=${{ vars.SELF_SERVICE_V2_ENABLED }}" \
+              "V2_MANAGER_OIDC_CLIENT_ID=${{ vars.V2_MANAGER_OIDC_CLIENT_ID }}" \
+              "V2_MANAGER_OIDC_CLIENT_SECRET=secretref:manager-app-client-secret" \
+              "V2_MANAGER_OIDC_REDIRECT_URI=${{ vars.V2_MANAGER_OIDC_REDIRECT_URI }}" \
+              "V2_TRANSIENT_PROTECTION_KEY=secretref:v2-transient-protection-key" \
+              "V2_VERIFIED_ID_AUTHORITY=${{ vars.V2_VERIFIED_ID_AUTHORITY }}" \
+              "V2_VERIFIED_ID_MANIFEST_URL=${{ vars.V2_VERIFIED_ID_MANIFEST_URL }}" \
+              "V2_VERIFIED_ID_CREDENTIAL_TYPE=${{ vars.V2_VERIFIED_ID_CREDENTIAL_TYPE }}" \
+              "V2_VERIFIED_ID_OBJECT_ID_CLAIM=${{ vars.V2_VERIFIED_ID_OBJECT_ID_CLAIM }}" \
+              "V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM=${{ vars.V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM }}" \
+              "V2_VERIFIED_ID_LINKED_DOMAIN=${{ vars.V2_VERIFIED_ID_LINKED_DOMAIN }}" \
+              "V2_VERIFIED_ID_CALLBACK_API_KEY=secretref:v2-verified-id-callback-api-key" \
+              "V2_MANAGER_NOTIFICATION_PROVIDER=${{ vars.V2_MANAGER_NOTIFICATION_PROVIDER }}" \
+              "V2_ACS_EMAIL_CONNECTION_STRING=secretref:acs-email-connection-string" \
+              "V2_ACS_EMAIL_SENDER_ADDRESS=secretref:acs-email-sender-address" \
+              "ONBOARDING_V2_REQUESTS_TABLE=${{ vars.ONBOARDING_V2_REQUESTS_TABLE }}" \
             --only-show-errors
 
       - name: Deploy image to Container App
@@ -223,18 +247,42 @@ jobs:
             --secrets \
               "session-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/session-secret,identityref:system" \
               "onboarding-approval-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/onboarding-approval-key,identityref:system" \
+              "acs-email-connection-string=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/acs-email-connection-string,identityref:system" \
+              "acs-email-sender-address=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/acs-email-sender-address,identityref:system" \
+              "manager-app-client-secret=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/manager-app-client-secret,identityref:system" \
+              "v2-transient-protection-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/v2-transient-protection-key,identityref:system" \
+              "v2-verified-id-callback-api-key=keyvaultref:${{ vars.KEY_VAULT_URL }}secrets/v2-verified-id-callback-api-key,identityref:system" \
             --only-show-errors
           az containerapp update \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
             --set-env-vars \
-              "ASSURANCE_MODE=invitation" \
+              "ASSURANCE_MODE=${{ vars.ASSURANCE_MODE }}" \
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
               "DEMO_MODE=false" \
               "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
               "ONBOARDING_STATE_BACKEND=azure-table" \
+              "AZURE_STORAGE_TABLE_ENDPOINT=${{ vars.AZURE_STORAGE_TABLE_ENDPOINT }}" \
+              "AZURE_TENANT_ID=${{ vars.AZURE_TENANT_ID }}" \
+              "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}" \
               "SESSION_SECRET=secretref:session-secret" \
               "ONBOARDING_APPROVAL_API_KEY=secretref:onboarding-approval-key" \
+              "SELF_SERVICE_V2_ENABLED=${{ vars.SELF_SERVICE_V2_ENABLED }}" \
+              "V2_MANAGER_OIDC_CLIENT_ID=${{ vars.V2_MANAGER_OIDC_CLIENT_ID }}" \
+              "V2_MANAGER_OIDC_CLIENT_SECRET=secretref:manager-app-client-secret" \
+              "V2_MANAGER_OIDC_REDIRECT_URI=${{ vars.V2_MANAGER_OIDC_REDIRECT_URI }}" \
+              "V2_TRANSIENT_PROTECTION_KEY=secretref:v2-transient-protection-key" \
+              "V2_VERIFIED_ID_AUTHORITY=${{ vars.V2_VERIFIED_ID_AUTHORITY }}" \
+              "V2_VERIFIED_ID_MANIFEST_URL=${{ vars.V2_VERIFIED_ID_MANIFEST_URL }}" \
+              "V2_VERIFIED_ID_CREDENTIAL_TYPE=${{ vars.V2_VERIFIED_ID_CREDENTIAL_TYPE }}" \
+              "V2_VERIFIED_ID_OBJECT_ID_CLAIM=${{ vars.V2_VERIFIED_ID_OBJECT_ID_CLAIM }}" \
+              "V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM=${{ vars.V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM }}" \
+              "V2_VERIFIED_ID_LINKED_DOMAIN=${{ vars.V2_VERIFIED_ID_LINKED_DOMAIN }}" \
+              "V2_VERIFIED_ID_CALLBACK_API_KEY=secretref:v2-verified-id-callback-api-key" \
+              "V2_MANAGER_NOTIFICATION_PROVIDER=${{ vars.V2_MANAGER_NOTIFICATION_PROVIDER }}" \
+              "V2_ACS_EMAIL_CONNECTION_STRING=secretref:acs-email-connection-string" \
+              "V2_ACS_EMAIL_SENDER_ADDRESS=secretref:acs-email-sender-address" \
+              "ONBOARDING_V2_REQUESTS_TABLE=${{ vars.ONBOARDING_V2_REQUESTS_TABLE }}" \
             --only-show-errors
 
       - name: Deploy image to Container App
