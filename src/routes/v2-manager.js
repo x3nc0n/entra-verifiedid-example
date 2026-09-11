@@ -4,7 +4,10 @@ const express = require('express');
 const graphService = require('../services/graph-service');
 const managerAuthService = require('../services/manager-auth-service');
 const onboardingService = require('../services/onboarding-v2-service');
-const { timingSafeTextEqual } = require('../services/v2-crypto-service');
+const {
+  digestIdentifier,
+  timingSafeTextEqual,
+} = require('../services/v2-crypto-service');
 const {
   getCsrfToken,
   requireCsrf,
@@ -17,6 +20,24 @@ function preAuthIsActive(preAuth) {
   return preAuth?.requestId &&
     preAuth.tokenHash &&
     Date.now() < Date.parse(preAuth.expiresAt);
+}
+
+function logManagerAuthorizationDiagnostics(message, details = {}) {
+  const redact = (key, value) => {
+    if (/requestId|correlationId|code$|state$/.test(key)) {
+      return value;
+    }
+    try {
+      return digestIdentifier(value);
+    } catch (_) {
+      return 'digest-unavailable';
+    }
+  };
+  const serialized = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${redact(key, value)}`)
+    .join(' ');
+  console.warn(`[v2-manager] ${message}${serialized ? `; ${serialized}` : ''}`);
 }
 
 router.get('/v2/manager/approval', async (req, res) => {
@@ -120,10 +141,64 @@ router.post('/auth/manager/callback', async (req, res) => {
       codeVerifier: flow.codeVerifier,
       authorizationPayload: req.body,
     });
+    const employee = await graphService.getEmployeeWithManager(
+      flow.request.employeeUserPrincipalName
+    );
+    if (!employee ||
+        !timingSafeTextEqual(
+          String(employee.id).toLowerCase(),
+          String(flow.request.employeeObjectId).toLowerCase()
+        ) ||
+        !employee.manager?.id) {
+      logManagerAuthorizationDiagnostics('Manager callback could not verify employee binding', {
+        requestId: flow.request.requestId,
+        correlationId: flow.request.correlationId,
+        employeeObjectId: flow.request.employeeObjectId,
+        graphEmployeeObjectId: employee?.id,
+        storedManagerObjectId: flow.request.managerObjectId,
+      });
+      throw new onboardingService.V2StateError(
+        'The current employee-to-manager relationship could not be verified.',
+        'manager_relationship_changed',
+        409
+      );
+    }
+    if (!timingSafeTextEqual(
+      String(manager.objectId).toLowerCase(),
+      String(employee.manager.id).toLowerCase()
+    )) {
+      logManagerAuthorizationDiagnostics('Manager callback object ID mismatch', {
+        requestId: flow.request.requestId,
+        correlationId: flow.request.correlationId,
+        storedManagerObjectId: flow.request.managerObjectId,
+        graphManagerObjectId: employee.manager.id,
+        signedInManagerObjectId: manager.objectId,
+        requestTenantId: flow.request.tenantId,
+        signedInTenantId: manager.tenantId,
+      });
+      throw new onboardingService.V2StateError(
+        'The signed-in account is not the current manager for this request.',
+        'manager_not_authorized',
+        403
+      );
+    }
+    if (!timingSafeTextEqual(
+      String(flow.request.managerObjectId).toLowerCase(),
+      String(employee.manager.id).toLowerCase()
+    )) {
+      logManagerAuthorizationDiagnostics('Manager callback repaired stale manager binding', {
+        requestId: flow.request.requestId,
+        correlationId: flow.request.correlationId,
+        storedManagerObjectId: flow.request.managerObjectId,
+        graphManagerObjectId: employee.manager.id,
+        signedInManagerObjectId: manager.objectId,
+      });
+    }
     await onboardingService.redeemManagerToken({
       requestId: flow.request.requestId,
       tokenHash: flow.request.managerTokenHash,
       managerObjectId: manager.objectId,
+      authorizedManagerObjectId: employee.manager.id,
       tenantId: manager.tenantId,
     });
     await regenerateSession(req);
@@ -146,7 +221,9 @@ router.post('/auth/manager/callback', async (req, res) => {
         ).catch(() => {});
       }
     }
-    console.warn('[v2-manager] Manager authentication was rejected.');
+    console.warn(
+      `[v2-manager] Manager authentication was rejected; code=${err.code || 'manager_authentication_failed'}`
+    );
     return res.status(403).render('v2-manager-approval', {
       title: 'Manager Sign-In Rejected',
       csrfToken: getCsrfToken(req, 'manager-bootstrap'),

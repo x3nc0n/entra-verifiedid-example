@@ -516,12 +516,14 @@ function createOnboardingV2Service(repository) {
 
   async function redeemManagerToken(input) {
     return updateRequest(input.requestId, ['manager-notified'], (current) => {
+      const authorizedManagerObjectId =
+        input.authorizedManagerObjectId || current.managerObjectId;
       if (current.managerTokenStatus !== 'active' ||
           Date.now() >= Date.parse(current.managerTokenExpiresAt) ||
           !timingSafeHashEqual(input.tokenHash, current.managerTokenHash) ||
           !timingSafeTextEqual(
             normalizeIdentifier(input.managerObjectId),
-            normalizeIdentifier(current.managerObjectId)
+            normalizeIdentifier(authorizedManagerObjectId)
           ) ||
           !timingSafeTextEqual(
             normalizeIdentifier(input.tenantId),
@@ -535,6 +537,7 @@ function createOnboardingV2Service(repository) {
       }
       return {
         ...current,
+        managerObjectId: authorizedManagerObjectId,
         managerTokenStatus: 'redeemed',
         managerTokenRedeemedAt: new Date().toISOString(),
         managerTokenAttemptCount: current.managerTokenAttemptCount + 1,
