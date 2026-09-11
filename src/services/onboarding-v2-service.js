@@ -129,6 +129,12 @@ class InMemoryV2Repository {
       .find((record) => record.managerAuthState === state) || null;
   }
 
+  async findByEmployeeInviteTokenHash(tokenHash) {
+    return [...this.requests.values()]
+      .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
+      .find((record) => record.employeeInviteTokenHash === tokenHash) || null;
+  }
+
   async findByIssuanceCorrelation(requestId, state) {
     return [...this.requests.values()]
       .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
@@ -288,6 +294,12 @@ class AzureTableV2Repository {
     );
   }
 
+  findByEmployeeInviteTokenHash(tokenHash) {
+    return this.findOne(
+      `PartitionKey eq '${REQUEST_PARTITION}' and employeeInviteTokenHash eq '${escapeOData(tokenHash)}'`
+    );
+  }
+
   findByIssuanceCorrelation(requestId, state) {
     return this.findOne(
       `PartitionKey eq '${REQUEST_PARTITION}' and issuanceRequestId eq '${escapeOData(requestId)}' and issuanceState eq '${escapeOData(state)}'`
@@ -435,6 +447,7 @@ function createOnboardingV2Service(repository) {
     const record = {
       requestId,
       correlationId: uuidv4(),
+      initiationMode: 'employee-self-service',
       tenantId: input.tenantId,
       employeeObjectId: input.employee.id,
       employeeUserPrincipalName: input.employee.userPrincipalName,
@@ -463,6 +476,55 @@ function createOnboardingV2Service(repository) {
       outcome: 'success',
     });
     return { record, managerToken };
+  }
+
+  async function createManagerInitiatedRequest(input) {
+    const now = Date.now();
+    const requestId = uuidv4();
+    const employeeInviteToken = randomOpaqueToken();
+    const expiresAt = new Date(
+      now + config.selfServiceV2.requestLifetimeMinutes * 60 * 1000
+    ).toISOString();
+    const tokenExpiresAt = new Date(
+      Math.min(
+        Date.parse(expiresAt),
+        now + config.selfServiceV2.managerTokenLifetimeMinutes * 60 * 1000
+      )
+    ).toISOString();
+    const record = {
+      requestId,
+      correlationId: uuidv4(),
+      initiationMode: 'manager-initiated',
+      tenantId: input.tenantId,
+      employeeObjectId: input.employee.id,
+      employeeUserPrincipalName: input.employee.userPrincipalName,
+      employeeDisplayName: input.employee.displayName ||
+        input.employee.userPrincipalName,
+      employeeIdHash: input.employeeIdHash,
+      managerObjectId: input.manager.id,
+      state: 'employee-invited',
+      managerDecision: 'approve',
+      managerDecisionAt: new Date(now).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+      expiresAt,
+      employeeInviteTokenHash: sha256(employeeInviteToken),
+      employeeInviteTokenStatus: 'active',
+      employeeInviteTokenCreatedAt: new Date(now).toISOString(),
+      employeeInviteTokenExpiresAt: tokenExpiresAt,
+      employeeInviteTokenAttemptCount: 0,
+      issuanceRetryCount: 0,
+      presentationRetryCount: 0,
+      verificationFailureCount: 0,
+    };
+    await repository.createRequest(record);
+    await repository.writeAudit({
+      requestId,
+      correlationId: record.correlationId,
+      eventType: 'request_created',
+      outcome: 'manager_initiated',
+    });
+    return { record, employeeInviteToken };
   }
 
   async function markManagerNotified(requestId, provider) {
@@ -510,6 +572,33 @@ function createOnboardingV2Service(repository) {
       tokenHash,
       expiresAt: new Date(
         Date.now() + config.selfServiceV2.managerPreAuthLifetimeMinutes * 60 * 1000
+      ).toISOString(),
+    };
+  }
+
+  async function activateEmployeeInviteToken(token) {
+    const tokenHash = sha256(token);
+    const request = await repository.findByEmployeeInviteTokenHash(tokenHash);
+    if (!request ||
+        request.state !== 'employee-invited' ||
+        request.employeeInviteTokenStatus !== 'active' ||
+        Date.now() >= Date.parse(request.employeeInviteTokenExpiresAt) ||
+        !timingSafeHashEqual(tokenHash, request.employeeInviteTokenHash)) {
+      throw new V2StateError(
+        'The employee invite link is invalid or expired.',
+        'invalid_employee_invite_token',
+        410
+      );
+    }
+    return {
+      requestId: request.requestId,
+      tokenHash,
+      employeeObjectId: request.employeeObjectId,
+      expiresAt: new Date(
+        Math.min(
+          Date.parse(request.expiresAt),
+          Date.now() + config.selfServiceV2.managerPreAuthLifetimeMinutes * 60 * 1000
+        )
       ).toISOString(),
     };
   }
@@ -604,6 +693,73 @@ function createOnboardingV2Service(repository) {
       outcome: code,
     });
     return updated;
+  }
+
+  async function recordEmployeeInviteFailure(requestId, tokenHash, code) {
+    const updated = await updateRequest(requestId, ['employee-invited'], (current) => {
+      if (current.employeeInviteTokenStatus !== 'active' ||
+          Date.now() >= Date.parse(current.employeeInviteTokenExpiresAt) ||
+          !timingSafeHashEqual(tokenHash, current.employeeInviteTokenHash)) {
+        throw new V2StateError(
+          'The employee invite link is invalid or expired.',
+          'invalid_employee_invite_token',
+          410
+        );
+      }
+      const attempts = (current.employeeInviteTokenAttemptCount || 0) + 1;
+      return {
+        ...current,
+        state: attempts >= config.selfServiceV2.maxEmployeeInviteConfirmAttempts
+          ? 'locked'
+          : 'employee-invited',
+        employeeInviteTokenAttemptCount: attempts,
+        lastEmployeeInviteFailureCode: code,
+        lastEmployeeInviteFailureAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    await repository.writeAudit({
+      requestId,
+      correlationId: updated.correlationId,
+      eventType: 'employee_invite_confirmation',
+      outcome: code,
+    });
+    return updated;
+  }
+
+  async function confirmEmployeeInvite(input) {
+    return updateRequest(input.requestId, ['employee-invited'], (current) => {
+      if (current.employeeInviteTokenStatus !== 'active' ||
+          Date.now() >= Date.parse(current.employeeInviteTokenExpiresAt) ||
+          !timingSafeHashEqual(input.tokenHash, current.employeeInviteTokenHash) ||
+          !timingSafeTextEqual(
+            normalizeIdentifier(input.employeeObjectId),
+            normalizeIdentifier(current.employeeObjectId)
+          ) ||
+          !timingSafeTextEqual(
+            normalizeIdentifier(input.userPrincipalName),
+            normalizeIdentifier(current.employeeUserPrincipalName)
+          ) ||
+          !timingSafeHashEqual(input.employeeIdHash, current.employeeIdHash)) {
+        throw new V2StateError(
+          'The employee invite confirmation did not match the bound employee.',
+          'employee_confirmation_failed',
+          403
+        );
+      }
+      return {
+        ...current,
+        state: 'manager-approved',
+        employeeInviteTokenStatus: 'redeemed',
+        employeeInviteTokenRedeemedAt: new Date().toISOString(),
+        employeeInviteTokenAttemptCount:
+          (current.employeeInviteTokenAttemptCount || 0) + 1,
+        employeeConfirmedAt: new Date().toISOString(),
+        lastEmployeeInviteFailureCode: undefined,
+        lastEmployeeInviteFailureAt: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+    });
   }
 
   async function decide(requestId, managerObjectId, decision) {
@@ -976,14 +1132,18 @@ function createOnboardingV2Service(repository) {
   return {
     enforceRateLimit,
     createRequest,
+    createManagerInitiatedRequest,
     loadRequest,
     markManagerNotified,
     markNotificationFailed,
     activateManagerToken,
+    activateEmployeeInviteToken,
     beginManagerSignIn,
     loadManagerAuthFlow,
     redeemManagerToken,
     recordManagerRedemptionFailure,
+    recordEmployeeInviteFailure,
+    confirmEmployeeInvite,
     decide,
     beginIssuance,
     attachIssuanceRequest,

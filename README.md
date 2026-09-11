@@ -4,28 +4,49 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js 20 LTS](https://img.shields.io/badge/node-20%20LTS-brightgreen.svg)](https://nodejs.org/)
 
-This Node.js/Express portal now runs a single onboarding experience: the v2
-manager-approved Microsoft Entra Verified ID self-service flow.
+This Node.js/Express portal now runs the v2 Microsoft Entra Verified ID
+experience for both manager-approved onboarding and self-service recovery.
 
 ## Flow overview
 
-1. The employee submits the directory UPN and employee ID.
-2. Graph resolves the immutable employee object ID and current manager.
-3. The app creates a durable onboarding request and a one-time manager approval
-   token stored only as a hash.
-4. The current Entra manager opens the approval link at
-   `GET /v2/manager/approval`, signs in through the dedicated single-tenant OIDC
-   application, and records an approve or reject decision.
-5. After approval, the employee requests issuance of the dedicated onboarding
-   credential and then presents it back to the portal.
-6. The callback validates issuer, credential type, linked domain, revocation
-   status, and the exact bound object ID plus employee ID before Microsoft Graph
-   can create a short-lived, single-use Temporary Access Pass (TAP).
-7. The employee signs in with the TAP, registers a tenant passkey, and confirms
-   the new FIDO2 method to finish onboarding.
-
-The legacy invitation, recovery, and future-partner-v1 Verified ID flows have
-been removed from the application.
+### Employee self-service onboarding
+
+1. The employee submits the directory UPN and employee ID.
+2. Graph resolves the immutable employee object ID and current manager.
+3. The app creates a durable onboarding request and a one-time manager approval
+   token stored only as a hash.
+4. The current Entra manager opens the approval link at
+   `GET /v2/manager/approval`, signs in through the dedicated single-tenant OIDC
+   application, and records an approve or reject decision.
+5. After approval, the employee requests issuance of the dedicated onboarding
+   credential and then presents it back to the portal.
+6. The callback validates issuer, credential type, linked domain, revocation
+   status, and the exact bound object ID plus employee ID before Microsoft Graph
+   can create a short-lived, single-use Temporary Access Pass (TAP).
+7. The employee signs in with the TAP, registers a tenant passkey, and confirms
+   the new FIDO2 method to finish onboarding.
+
+### Manager-initiated onboarding
+
+1. The manager signs in at `GET /v2/manager/dashboard`.
+2. Graph returns the signed-in manager's direct reports.
+3. The manager generates a one-time employee invitation for a direct report.
+4. The employee opens `GET /v2/onboarding/invite`, confirms UPN plus employee
+   ID, and then continues through the same Verified ID + TAP + passkey flow.
+
+### Self-service recovery
+
+1. The employee opens `GET /v2/recovery` and submits UPN plus employee ID.
+2. The app returns a generic response, binds an eligible request to the browser,
+   and asks for the existing Verified ID credential to be presented again.
+3. The callback validates the same bound object ID and employee ID claims.
+4. Before a replacement TAP is issued, Microsoft Graph revokes every existing
+   FIDO2 method for that employee.
+5. The employee signs in with the one-time TAP and registers a replacement
+   tenant passkey.
+
+The legacy v1 invitation-based and pre-v2 flows remain removed from the
+application.
 
 ## Runtime routes
 
@@ -33,33 +54,52 @@ been removed from the application.
 |-------|---------|
 | `GET /` | Redirect to the canonical onboarding entry point. |
 | `GET /v2/onboarding` | Employee intake and session-bound status UI. |
-| `POST /api/v2/onboarding/requests` | Validate directory evidence and create a durable request with a generic response. |
-| `GET /api/v2/onboarding/status` | Return coarse progress for the bound employee session. |
-| `POST /api/v2/verified-id/issuance/requests` | Create a dedicated Verified ID issuance request. |
-| `POST /api/v2/verified-id/issuance/callback` | Authenticate and correlate issuance callbacks. |
-| `POST /api/v2/verified-id/presentation/requests` | Create the constrained presentation request. |
-| `POST /api/v2/verified-id/presentation/callback` | Validate the credential and idempotently create TAP. |
-| `GET /v2/manager/approval` | Activate the fragment approval token and show the manager decision UI. |
-| `POST /api/v2/manager-approvals/activate` | Hash and bind the one-time manager token to a short pre-auth session. |
-| `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
-| `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
-| `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
-| `GET /v2/passkey` | Display the protected TAP once and direct the user to Security info. |
-| `POST /api/v2/passkey/confirm` | Confirm a newly added Graph FIDO2 method. |
-| `GET /v2/complete` | Finalize the request and destroy the onboarding session. |
+| `GET /v2/onboarding/invite` | Employee confirmation screen for a manager-generated invitation. |
+| `POST /api/v2/onboarding/requests` | Validate directory evidence and create a durable request with a generic response. |
+| `POST /api/v2/onboarding/invitations/activate` | Hash and bind the one-time employee invitation token to a short pre-auth session. |
+| `POST /api/v2/onboarding/invitations/confirm` | Confirm the invited employee identity before continuing onboarding. |
+| `GET /api/v2/onboarding/status` | Return coarse progress for the bound employee session. |
+| `GET /v2/manager/dashboard` | Signed-in manager dashboard for direct-report invitation generation. |
+| `POST /api/v2/verified-id/issuance/requests` | Create a dedicated Verified ID issuance request. |
+| `POST /api/v2/verified-id/issuance/callback` | Authenticate and correlate issuance callbacks. |
+| `POST /api/v2/verified-id/presentation/requests` | Create the constrained presentation request. |
+| `POST /api/v2/verified-id/presentation/callback` | Validate the credential and idempotently create TAP. |
+| `GET /v2/manager/approval` | Activate the fragment approval token and show the manager decision UI. |
+| `POST /api/v2/manager-approvals/activate` | Hash and bind the one-time manager token to a short pre-auth session. |
+| `POST /api/v2/manager/invitations` | Validate a selected direct report and create a manager-initiated onboarding request. |
+| `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
+| `GET /auth/manager/dashboard/signin` | Start the manager-dashboard OIDC/PKCE flow. |
+| `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
+| `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
+| `GET /v2/recovery` | Recovery intake and session-bound status UI. |
+| `POST /api/v2/recovery/requests` | Validate intake evidence and create a recovery request with a generic response. |
+| `GET /api/v2/recovery/status` | Return coarse progress for the bound recovery session. |
+| `POST /api/v2/recovery/verified-id/presentation/requests` | Create the constrained recovery presentation request. |
+| `POST /api/v2/recovery/verified-id/presentation/callback` | Validate the recovery credential and revoke passkeys before TAP issuance. |
+| `GET /v2/recovery/passkey` | Display the protected recovery TAP once and direct the user to Security info. |
+| `POST /api/v2/recovery/passkey/confirm` | Confirm a newly added replacement Graph FIDO2 method. |
+| `GET /v2/recovery/complete` | Finalize the recovery request and destroy the recovery session. |
+| `GET /v2/passkey` | Display the protected TAP once and direct the user to Security info. |
+| `POST /api/v2/passkey/confirm` | Confirm a newly added Graph FIDO2 method. |
+| `GET /v2/complete` | Finalize the request and destroy the onboarding session. |
 | `GET /health` | Health probe. |
 
 ## Security properties
 
 - Manager approval links carry the bearer token only in the URL fragment.
 - The raw manager token is never stored; only its SHA-256 hash is persisted.
-- Requests, rate limits, callback correlation, and state transitions are durable
-  and concurrency-safe in Azure Table Storage.
-- Verified ID presentation is constrained to the exact employee object ID and
-  employee ID recorded at intake.
-- Manager sign-in uses PKCE, state, nonce, and tenant/object-ID validation.
-- Cache-control, referrer, frame, content-type, and CSP headers are applied
-  across the app.
+- Employee invitation links also carry a fragment token that is stored only as a
+  SHA-256 hash.
+- Requests, rate limits, callback correlation, and state transitions are durable
+  and concurrency-safe in Azure Table Storage.
+- Verified ID presentation is constrained to the exact employee object ID and
+  employee ID recorded at intake.
+- Manager sign-in uses PKCE, state, nonce, and tenant/object-ID validation.
+- Recovery re-presentation of the existing Verified ID is required before
+  passkeys are revoked and a replacement TAP is issued.
+- Recovery revokes all existing FIDO2 methods before replacement passkey setup.
+- Cache-control, referrer, frame, content-type, and CSP headers are applied
+  across the app.
 - TAP values are single-use, short-lived, encrypted at rest, displayed once,
   and cleared after first display.
 - Completion requires Graph to report a newly added FIDO2 method.
@@ -104,11 +144,20 @@ Table Storage, and Graph configuration described below.
 | `V2_MAX_DAILY_REQUESTS_PER_UPN` | No | `3` | Daily employee UPN request limit. |
 | `V2_MAX_DAILY_REQUESTS_PER_IP` | No | `10` | Daily client IP request limit. |
 | `V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE` | No | `3` | Daily immutable employee-object request limit. |
-| `V2_MAX_PASSKEY_CONFIRM_ATTEMPTS` | No | `30` | Confirmation retry limit. |
-| `V2_MAX_ISSUANCE_RETRIES` | No | `3` | Issuance retry limit. |
-| `V2_MAX_PRESENTATION_RETRIES` | No | `3` | Presentation retry limit. |
-| `V2_MAX_VERIFICATION_FAILURES` | No | `3` | Verified ID validation failure limit. |
-| `V2_TRANSIENT_PROTECTION_KEY` | Live | None | Base64-encoded 32-byte AES-GCM key for transient PIN and TAP protection. |
+| `V2_MAX_DAILY_MANAGER_INVITATIONS` | No | `20` | Daily manager-dashboard invitation limit per signed-in manager. |
+| `V2_MAX_EMPLOYEE_INVITE_CONFIRM_ATTEMPTS` | No | `3` | Employee invitation identity-confirmation failure limit before lock. |
+| `V2_MAX_PASSKEY_CONFIRM_ATTEMPTS` | No | `30` | Confirmation retry limit. |
+| `V2_MAX_ISSUANCE_RETRIES` | No | `3` | Issuance retry limit. |
+| `V2_MAX_PRESENTATION_RETRIES` | No | `3` | Presentation retry limit. |
+| `V2_MAX_VERIFICATION_FAILURES` | No | `3` | Verified ID validation failure limit. |
+| `V2_RECOVERY_REQUEST_LIFETIME_MINUTES` | No | `60` | Recovery request validity window. |
+| `V2_RECOVERY_MAX_DAILY_REQUESTS_PER_IP` | No | `5` | Daily recovery request limit per client IP. |
+| `V2_RECOVERY_MAX_DAILY_REQUESTS_PER_UPN` | No | `3` | Daily recovery request limit per employee UPN. |
+| `V2_RECOVERY_MAX_DAILY_REQUESTS_PER_EMPLOYEE` | No | `3` | Daily recovery request limit per immutable employee object. |
+| `V2_RECOVERY_MAX_PRESENTATION_RETRIES` | No | `3` | Recovery credential-presentation retry limit. |
+| `V2_RECOVERY_MAX_VERIFICATION_FAILURES` | No | `3` | Recovery Verified ID validation failure limit. |
+| `V2_RECOVERY_MAX_PASSKEY_CONFIRM_ATTEMPTS` | No | `30` | Recovery replacement-passkey confirmation retry limit. |
+| `V2_TRANSIENT_PROTECTION_KEY` | Live | None | Base64-encoded 32-byte AES-GCM key for transient PIN and TAP protection. |
 | `V2_MANAGER_OIDC_CLIENT_ID` | Live | None | Dedicated single-tenant manager OIDC application client ID. |
 | `V2_MANAGER_OIDC_CLIENT_SECRET` | Live | None | Manager OIDC confidential-client secret. |
 | `V2_MANAGER_OIDC_REDIRECT_URI` | Live | `<APP_BASE_URL>/auth/manager/callback` | HTTPS `form_post` callback. |

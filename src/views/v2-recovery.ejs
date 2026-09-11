@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">Self-Service Recovery</h1>
+        <p class="page-subtitle">
+          Confirm your employee identity, present your existing Verified ID, then replace your tenant passkey.
+        </p>
+      </div>
+
+      <section class="card" id="v2RecoveryIntakePanel">
+        <h2 class="card-section-title">Start recovery</h2>
+        <form id="v2RecoveryForm">
+          <div class="form-group">
+            <label class="form-label" for="userPrincipalName">Tenant user principal name</label>
+            <input id="userPrincipalName" name="userPrincipalName" class="form-input" type="email" maxlength="254" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="employeeId">Employee ID</label>
+            <input id="employeeId" name="employeeId" class="form-input" type="text" maxlength="64" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Start recovery</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card mt-md hidden" id="v2RecoveryStatusPanel" aria-live="polite">
+        <h2 class="card-section-title">Recovery status</h2>
+        <p id="v2RecoveryStatusMessage">Checking your recovery request...</p>
+        <div id="v2RecoveryActionPanel"></div>
+      </section>
+
+      <section class="card mt-md hidden" id="v2RecoveryCredentialPanel" aria-live="polite">
+        <h2 class="card-section-title" id="v2RecoveryCredentialTitle">Present your Verified ID</h2>
+        <div id="v2RecoveryQrContainer"></div>
+        <p><a id="v2RecoveryDeepLink" class="btn btn-secondary" rel="noopener">Open Microsoft Authenticator</a></p>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-recovery.js" defer></script>
+</body>
+</html>

@@ -11,7 +11,7 @@ const managerAuthService = require('../src/services/manager-auth-service');
 const onboardingService = require('../src/services/onboarding-v2-service');
 const router = require('../src/routes/v2-manager');
 
-function createApp() {
+function createApp(seedSession) {
   const app = express();
   app.use(express.urlencoded({ extended: false }));
   app.use(session({
@@ -20,6 +20,9 @@ function createApp() {
     saveUninitialized: true,
   }));
   app.use((req, res, next) => {
+    if (typeof seedSession === 'function') {
+      seedSession(req.session, req);
+    }
     res.render = (view, model) => res.json({ view, model });
     next();
   });
@@ -205,5 +208,52 @@ test('manager callback records mismatch diagnostics after a genuine authorizatio
       getEmployeeWithManager: originals.getEmployeeWithManager,
     });
     console.warn = originals.warn;
+  }
+});
+
+test('manager dashboard callback creates an authenticated dashboard session', async () => {
+  const originals = {
+    exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+    getUserById: graphService.getUserById,
+  };
+
+  managerAuthService.exchangeAuthorizationCode = async () => ({
+    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    displayName: 'Manager',
+  });
+  graphService.getUserById = async () => ({
+    id: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    displayName: 'Manager',
+    userPrincipalName: 'manager@tenant.example',
+  });
+
+  const app = createApp((sessionState) => {
+    sessionState.v2ManagerDashboardAuth = {
+      state: 'dashboard-state',
+      nonce: 'expected-nonce',
+      codeVerifier: 'expected-verifier',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+  });
+  const server = app.listen(0);
+
+  try {
+    const response = await sendForm(server, '/auth/manager/callback', {
+      state: 'dashboard-state',
+      code: 'authorization-code',
+    });
+
+    assert.equal(response.statusCode, 302);
+    assert.equal(response.headers.location, '/v2/manager/dashboard');
+    assert.match(response.headers['set-cookie'].join('\n'), /connect\.sid=/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(managerAuthService, {
+      exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
+    });
+    Object.assign(graphService, {
+      getUserById: originals.getUserById,
+    });
   }
 });

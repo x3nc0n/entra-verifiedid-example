@@ -13,6 +13,7 @@ const v2OnboardingRouter = require('./routes/v2-onboarding');
 const v2VerifiedIdRouter = require('./routes/v2-verified-id');
 const v2ManagerRouter = require('./routes/v2-manager');
 const v2PasskeyRouter = require('./routes/v2-passkey');
+const v2RecoveryRouter = require('./routes/v2-recovery');
 const verifiedIdService = require('./services/verified-id-service');
 const { createSessionStore } = require('./services/table-session-store');
 const { setV2SecurityHeaders } = require('./middleware/v2-security');
@@ -104,6 +105,7 @@ app.use('/', v2OnboardingRouter);
 app.use('/', v2VerifiedIdRouter);
 app.use('/', v2ManagerRouter);
 app.use('/', v2PasskeyRouter);
+app.use('/', v2RecoveryRouter);
 
 app.use((req, res) => {
   res.status(404).render('status', {
@@ -148,4 +150,3 @@ Entra Verified ID Onboarding Portal`);
 }
 
 module.exports = app;
-

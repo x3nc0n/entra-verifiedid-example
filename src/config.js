@@ -89,6 +89,14 @@ const config = {
       process.env.V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE,
       3
     ),
+    maxDailyManagerInvitations: parseInteger(
+      process.env.V2_MAX_DAILY_MANAGER_INVITATIONS,
+      20
+    ),
+    maxEmployeeInviteConfirmAttempts: parseInteger(
+      process.env.V2_MAX_EMPLOYEE_INVITE_CONFIRM_ATTEMPTS,
+      3
+    ),
     maxPasskeyConfirmAttempts: parseInteger(
       process.env.V2_MAX_PASSKEY_CONFIRM_ATTEMPTS,
       30
@@ -130,6 +138,36 @@ const config = {
           process.env.V2_ACS_EMAIL_CONNECTION_STRING || '',
         senderAddress: process.env.V2_ACS_EMAIL_SENDER_ADDRESS || '',
       },
+    },
+    recovery: {
+      requestLifetimeMinutes: parseInteger(
+        process.env.V2_RECOVERY_REQUEST_LIFETIME_MINUTES,
+        60
+      ),
+      maxDailyRequestsPerIp: parseInteger(
+        process.env.V2_RECOVERY_MAX_DAILY_REQUESTS_PER_IP,
+        5
+      ),
+      maxDailyRequestsPerUpn: parseInteger(
+        process.env.V2_RECOVERY_MAX_DAILY_REQUESTS_PER_UPN,
+        3
+      ),
+      maxDailyRequestsPerEmployee: parseInteger(
+        process.env.V2_RECOVERY_MAX_DAILY_REQUESTS_PER_EMPLOYEE,
+        3
+      ),
+      maxPresentationRetries: parseInteger(
+        process.env.V2_RECOVERY_MAX_PRESENTATION_RETRIES,
+        3
+      ),
+      maxVerificationFailures: parseInteger(
+        process.env.V2_RECOVERY_MAX_VERIFICATION_FAILURES,
+        3
+      ),
+      maxPasskeyConfirmAttempts: parseInteger(
+        process.env.V2_RECOVERY_MAX_PASSKEY_CONFIRM_ATTEMPTS,
+        30
+      ),
     },
   },
 
