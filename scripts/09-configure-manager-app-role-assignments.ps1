@@ -300,20 +300,10 @@ try {
         )) {
             throw 'App-role definition update was not approved; no group assignments were written.'
         }
-        Invoke-AzureCliCommand `
-            -Arguments @(
-                'rest',
-                '--method',
-                'PATCH',
-                '--url',
-                "https://graph.microsoft.com/v1.0/applications/$applicationId",
-                '--headers',
-                'Content-Type=application/json',
-                '--body',
-                $roleBody,
-                '--output',
-                'none'
-            ) `
+        Invoke-AzureCliJsonWrite `
+            -Method 'PATCH' `
+            -Uri "https://graph.microsoft.com/v1.0/applications/$applicationId" `
+            -Json $roleBody `
             -CommandInvoker $commandInvoker | Out-Null
         Write-Host 'App-role definitions updated.'
     }
@@ -333,20 +323,10 @@ try {
         )) {
             throw "Assignment for group '$($state.GroupId)' was not approved; no later writes were performed."
         }
-        Invoke-AzureCliCommand `
-            -Arguments @(
-                'rest',
-                '--method',
-                'POST',
-                '--url',
-                "https://graph.microsoft.com/v1.0/groups/$($state.GroupId)/appRoleAssignments",
-                '--headers',
-                'Content-Type=application/json',
-                '--body',
-                $assignmentBody,
-                '--output',
-                'none'
-            ) `
+        Invoke-AzureCliJsonWrite `
+            -Method 'POST' `
+            -Uri "https://graph.microsoft.com/v1.0/groups/$($state.GroupId)/appRoleAssignments" `
+            -Json $assignmentBody `
             -CommandInvoker $commandInvoker | Out-Null
         Write-Host "Assignment created for $($state.GroupDisplayName) -> $($state.RoleValue)."
     }

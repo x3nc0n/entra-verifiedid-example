@@ -38,6 +38,35 @@ function Invoke-AzureCliCommand {
     return $output
 }
 
+function Invoke-AzureCliJsonWrite {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('PATCH', 'POST')]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+        [Parameter(Mandatory = $true)]
+        [string]$Json,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$CommandInvoker
+    )
+
+    $null = $Json | ConvertFrom-Json -ErrorAction Stop
+    $bodyPath = [System.IO.Path]::GetTempFileName()
+    try {
+        # A file keeps JSON quotes intact across PowerShell and Windows az.cmd.
+        [System.IO.File]::WriteAllText($bodyPath, $Json, [System.Text.UTF8Encoding]::new($false))
+        Invoke-AzureCliCommand -Arguments @(
+            'rest', '--method', $Method, '--url', $Uri,
+            '--headers', 'Content-Type=application/json',
+            '--body', "@$bodyPath", '--output', 'none'
+        ) -CommandInvoker $CommandInvoker
+    } finally {
+        [System.IO.File]::Delete($bodyPath)
+    }
+}
+
 function ConvertFrom-AzureCliJson {
     [CmdletBinding()]
     param(

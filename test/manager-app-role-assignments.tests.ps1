@@ -184,4 +184,34 @@ Assert-ThrowsLike -Pattern 'duplicate assignments' -Action {
         }
 }
 
+$capturedPaths = [System.Collections.Generic.List[string]]::new()
+$jsonBody = @{ description = 'Quotes "stay" intact & spaces'; isEnabled = $true } | ConvertTo-Json -Compress
+foreach ($method in @('PATCH', 'POST')) {
+    foreach ($exitCode in @(0, 1)) {
+        $invoke = {
+            param([string[]]$Arguments)
+            $bodyArgument = $Arguments[[array]::IndexOf($Arguments, '--body') + 1]
+            if (-not $bodyArgument.StartsWith('@')) { throw 'JSON must be passed by file.' }
+            $bodyPath = $bodyArgument.Substring(1)
+            $capturedPaths.Add($bodyPath)
+            if ([System.IO.File]::ReadAllText($bodyPath) -cne $jsonBody) {
+                throw 'Temporary body file must preserve exact JSON.'
+            }
+            return @{ ExitCode = $exitCode; Output = 'synthetic result' }
+        }
+        if ($exitCode -eq 0) {
+            Invoke-AzureCliJsonWrite -Method $method -Uri 'https://graph.microsoft.com/v1.0/example' `
+                -Json $jsonBody -CommandInvoker $invoke | Out-Null
+        } else {
+            Assert-ThrowsLike -Pattern 'Azure CLI command failed' -Action {
+                Invoke-AzureCliJsonWrite -Method $method -Uri 'https://graph.microsoft.com/v1.0/example' `
+                    -Json $jsonBody -CommandInvoker $invoke
+            }
+        }
+    }
+}
+foreach ($bodyPath in $capturedPaths) {
+    if (Test-Path -LiteralPath $bodyPath) { throw 'Temporary body file was not removed.' }
+}
+
 Write-Output 'Manager app-role assignment tests passed.'
