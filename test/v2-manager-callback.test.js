@@ -95,6 +95,7 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     objectId: '99999999-9999-9999-9999-999999999999',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
+    roles: [config.selfServiceV2.authorization.userRoleValue],
   });
   graphService.getEmployeeWithManager = async () => ({
     id: '12345678-1234-1234-1234-1234567890ab',
@@ -182,6 +183,7 @@ test('manager callback treats a session-persistence failure as distinct from an 
     objectId: '99999999-9999-9999-9999-999999999999',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
+    roles: [config.selfServiceV2.authorization.userRoleValue],
   });
   graphService.getEmployeeWithManager = async () => ({
     id: '12345678-1234-1234-1234-1234567890ab',
@@ -273,6 +275,7 @@ test('manager callback records mismatch diagnostics after a genuine authorizatio
   managerAuthService.exchangeAuthorizationCode = async () => ({
     objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    roles: [config.selfServiceV2.authorization.userRoleValue],
   });
   onboardingService.redeemManagerToken = async () => {
     throw new onboardingService.V2StateError(
@@ -339,6 +342,7 @@ test('manager dashboard callback creates an authenticated dashboard session', as
     objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
+    roles: [config.selfServiceV2.authorization.userRoleValue],
   });
   graphService.getUserById = async () => ({
     id: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
@@ -375,6 +379,57 @@ test('manager dashboard callback creates an authenticated dashboard session', as
     Object.assign(graphService, {
       getUserById: originals.getUserById,
       requireNativeUser: originals.requireNativeUser,
+    });
+    config.selfServiceV2.protectionKey = originals.protectionKey;
+  }
+});
+
+test('admin dashboard callback requires the portal admin app role', async () => {
+  const originals = {
+    exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+    getUserById: graphService.getUserById,
+    protectionKey: config.selfServiceV2.protectionKey,
+  };
+  config.selfServiceV2.protectionKey = Buffer.alloc(32, 9).toString('base64');
+
+  managerAuthService.exchangeAuthorizationCode = async () => ({
+    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    displayName: 'Portal Admin',
+    roles: [config.selfServiceV2.authorization.adminRoleValue],
+  });
+  graphService.getUserById = async () => ({
+    id: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    displayName: 'Portal Admin',
+    userPrincipalName: 'admin@tenant.example',
+  });
+  await onboardingService.createDashboardAuthTransaction({
+    state: 'admin-state',
+    nonce: 'expected-nonce',
+    codeVerifier: 'expected-verifier',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  }, 'admin');
+
+  const app = createApp();
+  const server = app.listen(0);
+
+  try {
+    const response = await sendForm(server, '/auth/manager/callback', {
+      state: 'admin-state',
+      code: 'authorization-code',
+    });
+
+    assert.equal(response.statusCode, 200);
+    const parsed = JSON.parse(response.body);
+    assert.equal(parsed.view, 'v2-manager-callback-complete');
+    assert.equal(parsed.model.continueHref, '/v2/admin');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(managerAuthService, {
+      exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
+    });
+    Object.assign(graphService, {
+      getUserById: originals.getUserById,
     });
     config.selfServiceV2.protectionKey = originals.protectionKey;
   }

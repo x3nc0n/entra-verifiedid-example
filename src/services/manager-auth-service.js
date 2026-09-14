@@ -55,11 +55,30 @@ function validateIdTokenClaims(claims, expected) {
   if (!acceptedIssuers.some((issuer) => timingSafeTextEqual(claims.iss, issuer))) {
     throw new Error('Manager ID token issuer does not match.');
   }
+  const roles = Array.isArray(claims.roles)
+    ? claims.roles.filter((role) => typeof role === 'string')
+    : [];
   return {
     objectId: claims.oid,
     tenantId: claims.tid,
     displayName: claims.name || null,
+    roles,
   };
+}
+
+function hasRole(authenticatedPrincipal, roleValue) {
+  return Boolean(roleValue) &&
+    Array.isArray(authenticatedPrincipal?.roles) &&
+    authenticatedPrincipal.roles.some((role) => timingSafeTextEqual(role, roleValue));
+}
+
+function requireRole(authenticatedPrincipal, roleValue, message) {
+  if (!hasRole(authenticatedPrincipal, roleValue)) {
+    const err = new Error(message);
+    err.code = 'required_app_role_missing';
+    err.status = 403;
+    throw err;
+  }
 }
 
 function createManagerAuthService(options = {}) {
@@ -125,6 +144,8 @@ function getDefaultService() {
 module.exports = {
   createManagerAuthService,
   validateIdTokenClaims,
+  hasRole,
+  requireRole,
   createAuthorizationRequest: (...args) =>
     getDefaultService().createAuthorizationRequest(...args),
   exchangeAuthorizationCode: (...args) =>

@@ -214,27 +214,31 @@ async function listDirectReports(managerObjectId, dependencies = {}) {
   return reports;
 }
 
-async function isUserInGroup(userId, groupId) {
+async function isUserDirectMemberOfGroup(userId, groupId, dependencies = {}) {
   if (config.demoMode) return true;
 
-  const token = await getAccessToken();
+  const token = await (dependencies.getAccessToken || getAccessToken)();
+  const get = dependencies.get || axios.get.bind(axios);
+  const encodedGroup = encodeURIComponent(groupId);
   const encodedUser = encodeURIComponent(userId);
-  const response = await axios.post(
-    `${config.graph.baseUrl}/v1.0/users/${encodedUser}/checkMemberGroups`,
-    { groupIds: [groupId] },
-    {
-      headers: {
-        ...authorizationHeaders(token),
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-  return (response.data.value || [])
-    .some((value) => String(value).toLowerCase() === String(groupId).toLowerCase());
+  try {
+    await get(
+      `${config.graph.baseUrl}/v1.0/groups/${encodedGroup}/members/${encodedUser}/$ref`,
+      {
+        headers: authorizationHeaders(token),
+      }
+    );
+    return true;
+  } catch (err) {
+    if (err.response?.status === 404) return false;
+    throw err;
+  }
 }
 
 async function requireUserInGroup(userId, groupId, errorCode, dependencies = {}) {
-  const checkMembership = dependencies.isUserInGroup || isUserInGroup;
+  const checkMembership = dependencies.isUserDirectMemberOfGroup ||
+    dependencies.isUserInGroup ||
+    isUserDirectMemberOfGroup;
   if (!groupId || !await checkMembership(userId, groupId)) {
     throw new PilotEligibilityError(
       'The Entra account is not a current member of the required configured group.',
@@ -468,7 +472,8 @@ module.exports = {
   getManagerByUserId,
   getEmployeeWithManager,
   listDirectReports,
-  isUserInGroup,
+  isUserInGroup: isUserDirectMemberOfGroup,
+  isUserDirectMemberOfGroup,
   requireUserInGroup,
   requireNativeUser,
   requirePortalAdmin,

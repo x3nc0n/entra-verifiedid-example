@@ -10,30 +10,38 @@ Verified ID onboarding flow: the **Admin**, the **Manager**, and the **Employee*
 ### 1.1 One-time setup
 
 1. Set `PILOT_GROUP_ID` to the dedicated onboarding group.
-2. Set `V2_ADMIN_GROUP_ID` to the immutable security group object ID for
-   portal administrators and `V2_USERS_GROUP_ID` to the immutable security
-   group object ID for users, managers, and skip-level managers. For the Spaid
-   pilot tenant those deployment values are JustJohn-SG
+2. Set `V2_ADMIN_GROUP_ID` to the immutable security group object ID assigned
+   to the portal administrator app role and `V2_USERS_GROUP_ID` to the immutable
+   security group object ID assigned to the user app role and used for tokenless
+   bootstrap eligibility. For the Spaid pilot tenant those deployment values are
+   JustJohn-SG
    `80334aae-af17-4a5a-9bca-046c0df39c15` and NativeUsers-SG
    `914a7e6f-dcc2-438a-bc02-d58d2eb5e87a`; keep them in deployment
    configuration rather than hardcoding names.
-3. Configure `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime
+3. Define app roles on the manager OIDC app registration with stable IDs and
+   `allowedMemberTypes: ['User']`: `VerifiedId.Onboarding.Admin` and
+   `VerifiedId.Onboarding.User`. Assign JustJohn-SG to Admin and NativeUsers-SG
+   to User through **Enterprise applications** -> the manager OIDC app ->
+   **Users and groups** -> **Add user/group** -> select group -> select app
+   role. Group assignment requires the appropriate Entra edition; nested groups
+   do not cascade into the emitted `roles` claim.
+4. Configure `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime
    identity `Storage Table Data Contributor` on the session and v2 request
    tables.
-4. Configure the dedicated manager OIDC application and the exact
+5. Configure the dedicated manager OIDC application and the exact
    `V2_MANAGER_OIDC_REDIRECT_URI`.
-5. Configure the dedicated v2 Verified ID contract values:
+6. Configure the dedicated v2 Verified ID contract values:
    `V2_VERIFIED_ID_AUTHORITY`, `V2_VERIFIED_ID_MANIFEST_URL`,
    `V2_VERIFIED_ID_CREDENTIAL_TYPE`, `V2_VERIFIED_ID_OBJECT_ID_CLAIM`,
    `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM`, `V2_VERIFIED_ID_LINKED_DOMAIN`, and
    `V2_VERIFIED_ID_CALLBACK_API_KEY`.
-6. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`, and
+7. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`, and
    `V2_MANAGER_OIDC_CLIENT_SECRET` as secure secrets.
-7. Grant the runtime identity the Graph roles used by this flow:
+8. Grant the runtime identity the Graph roles used by this flow:
    `User.Read.All`, `GroupMember.Read.All`,
    `UserAuthMethod-TAP.ReadWrite.All`, and
    `UserAuthMethod-Passkey.Read.All`.
-8. Configure ACS Email when manager notifications should be sent live.
+9. Configure ACS Email when manager notifications should be sent live.
 
 ### 1.2 Ongoing responsibilities
 
@@ -41,8 +49,8 @@ Verified ID onboarding flow: the **Admin**, the **Manager**, and the **Employee*
 |---|---|
 | Rotate app secrets | Rotate the Key Vault-backed secrets and redeploy. |
 | Add or remove pilot users | Update membership in the dedicated pilot group in Entra. |
-| Authorize portal admins | Assign or remove users/groups in the configured admin security group. This is a manual Entra admin step, not a GitHub Actions task. |
-| Authorize users/managers | Maintain membership in the configured users security group; Graph manager relationships still define direct and skip-level scope. |
+| Authorize portal admins | Maintain direct members of the configured admin security group assigned to the Admin app role. This is a manual Entra Enterprise App assignment step, not a GitHub Actions task. |
+| Authorize users/managers | Maintain direct members of the configured users security group assigned to the User app role; Graph manager relationships still define direct and skip-level scope. |
 | Investigate a stuck request | Use the scoped admin reset endpoint with a request kind, request ID, current ETag, action, and reason; the raw approval token, PIN, and TAP are not logged. |
 | Validate manager sign-in | Confirm the manager OIDC app registration still matches `/auth/manager/callback`. |
 

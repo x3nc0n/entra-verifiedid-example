@@ -42,7 +42,18 @@ function dashboardSessionIsActive(session) {
 function adminSessionIsActive(session) {
   return session?.adminObjectId &&
     session?.tenantId &&
+    managerAuthService.hasRole(
+      session,
+      config.selfServiceV2.authorization.adminRoleValue
+    ) &&
     Date.now() < Date.parse(session.expiresAt || 0);
+}
+
+function dashboardSessionHasUserRole(session) {
+  return managerAuthService.hasRole(
+    session,
+    config.selfServiceV2.authorization.userRoleValue
+  );
 }
 
 function requestSummary(request, requestKind = 'onboarding') {
@@ -87,11 +98,11 @@ async function approverRoleForLiveRelationship(request, approverObjectId) {
       )) {
     return null;
   }
+
   if (timingSafeTextEqual(
     String(approverObjectId).toLowerCase(),
     String(employee.manager.id).toLowerCase()
   )) {
-    await graphService.requireNativeUser(approverObjectId);
     return 'direct-manager';
   }
   if (!request.skipManagerObjectId) return null;
@@ -105,7 +116,6 @@ async function approverRoleForLiveRelationship(request, approverObjectId) {
         String(approverObjectId).toLowerCase(),
         String(skipManager.id).toLowerCase()
       )) {
-    await graphService.requireNativeUser(approverObjectId);
     return 'skip-manager';
   }
   return null;
@@ -131,7 +141,7 @@ function logManagerAuthorizationDiagnostics(message, details = {}) {
 
 router.get('/v2/manager/approval', async (req, res) => {
   const managerSession = req.session.v2Manager;
-  if (managerSession?.requestId) {
+  if (managerSession?.requestId && dashboardSessionHasUserRole(managerSession)) {
     try {
       const request = await (managerSession.requestKind === 'recovery'
         ? recoveryService
@@ -160,7 +170,8 @@ router.get('/v2/manager/approval', async (req, res) => {
 
 router.get('/v2/manager/dashboard', async (req, res) => {
   const dashboardSession = req.session.v2ManagerDashboard;
-  if (!dashboardSessionIsActive(dashboardSession)) {
+  if (!dashboardSessionIsActive(dashboardSession) ||
+      !dashboardSessionHasUserRole(dashboardSession)) {
     delete req.session.v2ManagerDashboard;
     return res.render('v2-manager-dashboard', {
       title: 'Manager Dashboard',
@@ -343,9 +354,17 @@ router.post('/auth/manager/callback', async (req, res) => {
         authorizationPayload: req.body,
       });
       if (adminAuth) {
-        await graphService.requirePortalAdmin(authenticatedManager.objectId);
+        managerAuthService.requireRole(
+          authenticatedManager,
+          config.selfServiceV2.authorization.adminRoleValue,
+          'The signed-in account is not assigned to the portal administrator app role.'
+        );
       } else {
-        await graphService.requireNativeUser(authenticatedManager.objectId);
+        managerAuthService.requireRole(
+          authenticatedManager,
+          config.selfServiceV2.authorization.userRoleValue,
+          'The signed-in account is not assigned to the user app role.'
+        );
       }
       const managerProfile = await graphService.getUserById(authenticatedManager.objectId);
       await regenerateSession(req);
@@ -355,6 +374,7 @@ router.post('/auth/manager/callback', async (req, res) => {
           tenantId: authenticatedManager.tenantId,
           displayName: managerProfile?.displayName || authenticatedManager.displayName,
           userPrincipalName: managerProfile?.userPrincipalName || null,
+          roles: authenticatedManager.roles,
           authenticatedAt: new Date().toISOString(),
           expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         };
@@ -365,6 +385,7 @@ router.post('/auth/manager/callback', async (req, res) => {
           tenantId: authenticatedManager.tenantId,
           displayName: managerProfile?.displayName || authenticatedManager.displayName,
           userPrincipalName: managerProfile?.userPrincipalName || null,
+          roles: authenticatedManager.roles,
           authenticatedAt: new Date().toISOString(),
           expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         };
@@ -413,6 +434,11 @@ router.post('/auth/manager/callback', async (req, res) => {
       codeVerifier: flow.codeVerifier,
       authorizationPayload: req.body,
     });
+    managerAuthService.requireRole(
+      authenticatedManager,
+      config.selfServiceV2.authorization.userRoleValue,
+      'The signed-in account is not assigned to the user app role.'
+    );
     const approverRole = await approverRoleForLiveRelationship(
       flow.request,
       authenticatedManager.objectId
@@ -443,6 +469,7 @@ router.post('/auth/manager/callback', async (req, res) => {
         requestKind: flow.requestKind,
         managerObjectId: authenticatedManager.objectId,
         tenantId: authenticatedManager.tenantId,
+        roles: authenticatedManager.roles,
         authenticatedAt: new Date().toISOString(),
       };
       getCsrfToken(req, 'manager');
@@ -535,6 +562,7 @@ router.post(
   async (req, res) => {
     const managerSession = req.session.v2Manager;
     if (!managerSession ||
+        !dashboardSessionHasUserRole(managerSession) ||
         !timingSafeTextEqual(managerSession.requestId, req.params.requestId)) {
       return res.status(403).json({ error: 'Manager authorization is required.' });
     }
@@ -578,7 +606,8 @@ router.post(
   requireCsrf('manager-dashboard'),
   async (req, res) => {
     const dashboardSession = req.session.v2ManagerDashboard;
-    if (!dashboardSessionIsActive(dashboardSession)) {
+    if (!dashboardSessionIsActive(dashboardSession) ||
+        !dashboardSessionHasUserRole(dashboardSession)) {
       delete req.session.v2ManagerDashboard;
       return res.status(403).json({ error: 'Manager dashboard authorization is required.' });
     }
@@ -587,7 +616,6 @@ router.post(
       const directReports = await graphService.listDirectReports(
         dashboardSession.managerObjectId
       );
-      await graphService.requireNativeUser(dashboardSession.managerObjectId);
       const employee = directReports.find((report) =>
         timingSafeTextEqual(
           String(report.id).toLowerCase(),
@@ -714,7 +742,7 @@ router.get('/v2/admin', (req, res) => {
     return res.render('status', {
       title: 'Portal Admin',
       heading: 'Portal administrator sign-in required',
-      message: 'Sign in with an account assigned to the configured administrator group.',
+      message: 'Sign in with an account assigned to the configured administrator app role.',
       actionHref: '/auth/admin/signin',
       actionLabel: 'Sign in as administrator',
     });
@@ -735,7 +763,7 @@ router.post(
     const adminSession = req.session.v2PortalAdmin;
     if (!adminSessionIsActive(adminSession)) {
       delete req.session.v2PortalAdmin;
-      return res.status(403).json({ error: 'Portal administrator group membership is required.' });
+      return res.status(403).json({ error: 'Portal administrator app role is required.' });
     }
     const service = req.params.requestKind === 'recovery'
       ? recoveryService
@@ -744,7 +772,6 @@ router.post(
         : null;
     if (!service) return res.status(404).json({ error: 'Unknown request kind.' });
     try {
-      await graphService.requirePortalAdmin(adminSession.adminObjectId);
       const updated = await service.adminResetRequest(req.params.requestId, {
         action: req.body.action,
         reason: req.body.reason,

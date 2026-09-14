@@ -75,7 +75,7 @@ application.
 | `POST /api/v2/manager/invitations` | Validate a selected direct report and create a manager-initiated onboarding request. |
 | `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
 | `GET /auth/manager/dashboard/signin` | Start the manager-dashboard OIDC/PKCE flow. |
-| `GET /auth/admin/signin` | Start the admin OIDC/PKCE flow before live group membership authorization. |
+| `GET /auth/admin/signin` | Start the admin OIDC/PKCE flow before app-role authorization. |
 | `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
 | `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
 | `GET /v2/admin` | Portal administrator operation entry point. |
@@ -103,10 +103,15 @@ application.
   and concurrency-safe in Azure Table Storage.
 - Verified ID presentation is constrained to the exact employee object ID and
   employee ID recorded at intake.
-- Manager sign-in uses PKCE, state, nonce, and tenant/object-ID validation.
-- Admin authority comes from live membership in the configured immutable admin
-  group object ID. User, manager, and skip-manager eligibility comes from live
-  membership in the configured immutable users group object ID.
+- Manager/admin sign-in uses PKCE, state, nonce, tenant/object-ID validation,
+  and the `roles` claim from the manager OIDC app. Portal admin access requires
+  the configured admin app role. Manager dashboard and approval access require
+  the configured user app role plus live Graph relationship scope for manager or
+  skip-manager decisions.
+- Unauthenticated onboarding and recovery bootstrap cannot rely on an OIDC
+  token, so the server separately checks direct membership in the configured
+  NativeUsers group before creating request context. Do not substitute nested or
+  transitive groups for this bootstrap check.
 - Manager dashboard OIDC transaction state is durable, so `form_post`
   callbacks do not rely on SameSite=Strict cookies carrying session-only
   pre-auth state across a cross-site POST.
@@ -149,8 +154,10 @@ Table Storage, and Graph configuration described below.
 | `AZURE_CLIENT_SECRET` | No | None | Deprecated runtime secret; preserved only for bootstrap compatibility. |
 | `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<tenant>` | Entra authority base URL. |
 | `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked before TAP creation. |
-| `V2_ADMIN_GROUP_ID` | Live | None | Immutable object ID of the security group authorized for portal admin reset operations. |
-| `V2_USERS_GROUP_ID` | Live | None | Immutable object ID of the security group required for employee, manager, and skip-level participation. |
+| `V2_ADMIN_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the admin app role in the manager OIDC Enterprise App. |
+| `V2_USERS_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the user app role and used for tokenless bootstrap eligibility. |
+| `V2_ADMIN_ROLE_VALUE` | No | `VerifiedId.Onboarding.Admin` | Stable manager OIDC app role value required for portal admin reset operations. |
+| `V2_USER_ROLE_VALUE` | No | `VerifiedId.Onboarding.User` | Stable manager OIDC app role value required for manager dashboard and approval sign-in. |
 | `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
 | `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
 | `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
@@ -233,14 +240,24 @@ those workflows are being updated in the same reviewed infra PR.
    configuration, not hardcoded runtime names.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.
-4. Grant the runtime identity the Graph app roles used by this flow:
+4. Define these app roles on the manager OIDC app registration, with stable IDs
+   and `allowedMemberTypes: ['User']`, then assign groups on the Enterprise App:
+   `VerifiedId.Onboarding.Admin` for JustJohn-SG and
+   `VerifiedId.Onboarding.User` for NativeUsers-SG. In the Entra admin center:
+   **Enterprise applications** -> the manager OIDC app -> **Users and groups**
+   -> **Add user/group** -> select the group -> select the app role. Group-based
+   assignment requires an Entra edition that supports assigning groups to
+   enterprise applications; nested groups do not cascade into the emitted
+   `roles` claim. The tenant licensing prerequisite is user-confirmed for the
+   Spaid pilot, but not independently verified by this repo.
+5. Grant the runtime identity the Graph app roles used by this flow:
    `User.Read.All`, `GroupMember.Read.All`,
    `UserAuthMethod-TAP.ReadWrite.All`, and
    `UserAuthMethod-Passkey.Read.All`.
-5. Provision and register the dedicated manager OIDC app callback at
+6. Provision and register the dedicated manager OIDC app callback at
    `/auth/manager/callback`.
-6. Provision the dedicated Verified ID v2 contract and manifest.
-7. Configure ACS Email when live manager notifications should be sent.
+7. Provision the dedicated Verified ID v2 contract and manifest.
+8. Configure ACS Email when live manager notifications should be sent.
 
 See [`docs/architecture.md`](docs/architecture.md),
 [`docs/job-aids.md`](docs/job-aids.md), and [SECURITY.md](SECURITY.md).

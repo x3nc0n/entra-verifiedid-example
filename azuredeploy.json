@@ -98,14 +98,28 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Immutable object ID of the Entra security group authorized for portal admin reset operations."
+        "description": "Immutable object ID of the Entra security group assigned to the manager OIDC Admin app role."
       }
     },
     "usersGroupId": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Immutable object ID of the Entra security group required for user, manager, and skip-level participation."
+        "description": "Immutable object ID of the Entra security group assigned to the manager OIDC User app role and used for tokenless bootstrap eligibility."
+      }
+    },
+    "adminRoleValue": {
+      "type": "string",
+      "defaultValue": "VerifiedId.Onboarding.Admin",
+      "metadata": {
+        "description": "Manager OIDC app role value assigned to portal administrators."
+      }
+    },
+    "userRoleValue": {
+      "type": "string",
+      "defaultValue": "VerifiedId.Onboarding.User",
+      "metadata": {
+        "description": "Manager OIDC app role value assigned to authenticated users, managers, and skip-level managers."
       }
     },
     "demoMode": {
@@ -378,6 +392,14 @@
                 {
                   "name": "V2_USERS_GROUP_ID",
                   "value": "[parameters('usersGroupId')]"
+                },
+                {
+                  "name": "V2_ADMIN_ROLE_VALUE",
+                  "value": "[parameters('adminRoleValue')]"
+                },
+                {
+                  "name": "V2_USER_ROLE_VALUE",
+                  "value": "[parameters('userRoleValue')]"
                 },
                 {
                   "name": "KEY_VAULT_URL",

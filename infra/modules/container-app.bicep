@@ -27,11 +27,17 @@ param fido2Origin string
 @description('Immutable object ID of the dedicated Entra pilot group.')
 param pilotGroupId string
 
-@description('Immutable object ID of the Entra security group authorized for portal admin reset operations.')
+@description('Immutable object ID of the Entra security group assigned to the manager OIDC Admin app role.')
 param adminGroupId string = ''
 
-@description('Immutable object ID of the Entra security group required for user, manager, and skip-level participation.')
+@description('Immutable object ID of the Entra security group assigned to the manager OIDC User app role and used for tokenless bootstrap eligibility.')
 param usersGroupId string = ''
+
+@description('Manager OIDC app role value assigned to portal administrators.')
+param adminRoleValue string = 'VerifiedId.Onboarding.Admin'
+
+@description('Manager OIDC app role value assigned to authenticated users, managers, and skip-level managers.')
+param userRoleValue string = 'VerifiedId.Onboarding.User'
 
 @description('Enable demo mode.')
 param demoMode bool = false
@@ -146,6 +152,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PILOT_GROUP_ID', value: pilotGroupId }
             { name: 'V2_ADMIN_GROUP_ID', value: adminGroupId }
             { name: 'V2_USERS_GROUP_ID', value: usersGroupId }
+            { name: 'V2_ADMIN_ROLE_VALUE', value: adminRoleValue }
+            { name: 'V2_USER_ROLE_VALUE', value: userRoleValue }
             { name: 'KEY_VAULT_URL', value: keyVaultUrl }
             { name: 'DEMO_MODE', value: string(demoMode) }
             { name: 'ONBOARDING_STATE_BACKEND', value: 'azure-table' }

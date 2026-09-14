@@ -40,11 +40,17 @@ param fido2Origin string = ''
 @description('Immutable object ID of the dedicated Entra pilot group. No tenant-wide default is permitted.')
 param pilotGroupId string
 
-@description('Immutable object ID of the Entra security group authorized for portal admin reset operations.')
+@description('Immutable object ID of the Entra security group assigned to the manager OIDC Admin app role.')
 param adminGroupId string = ''
 
-@description('Immutable object ID of the Entra security group required for user, manager, and skip-level participation.')
+@description('Immutable object ID of the Entra security group assigned to the manager OIDC User app role and used for tokenless bootstrap eligibility.')
 param usersGroupId string = ''
+
+@description('Manager OIDC app role value assigned to portal administrators.')
+param adminRoleValue string = 'VerifiedId.Onboarding.Admin'
+
+@description('Manager OIDC app role value assigned to authenticated users, managers, and skip-level managers.')
+param userRoleValue string = 'VerifiedId.Onboarding.User'
 
 @description('Enable demo mode (loosened auth for demo purposes).')
 param demoMode bool = false
@@ -106,6 +112,8 @@ module containerApp 'modules/container-app.bicep' = {
     pilotGroupId: pilotGroupId
     adminGroupId: adminGroupId
     usersGroupId: usersGroupId
+    adminRoleValue: adminRoleValue
+    userRoleValue: userRoleValue
     demoMode: demoMode
     appInsightsConnectionString: monitoring.outputs.connectionString
     appInsightsInstrumentationKey: monitoring.outputs.instrumentationKey

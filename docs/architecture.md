@@ -39,8 +39,9 @@ sequenceDiagram
 | Boundary | Control |
 |----------|---------|
 | Intake | The browser submits only the employee UPN and employee ID. Graph resolves the immutable object ID and manager. |
-| Manager approval | Approval links use an opaque fragment token stored only as a hash. The manager must also complete tenant OIDC sign-in with PKCE, state, and nonce. |
-| Authorization | Decision recording re-checks the current Graph manager relationship before approval or rejection is accepted. |
+| Manager approval | Approval links use an opaque fragment token stored only as a hash. The manager must also complete tenant OIDC sign-in with PKCE, state, nonce, tenant/object-ID validation, and the configured User app role. |
+| Authorization | Portal admin access requires the configured Admin app role in the validated OIDC `roles` claim. Manager and skip-manager decisions require the configured User app role plus a live Graph relationship re-check before approval or rejection is accepted. |
+| Bootstrap eligibility | Unauthenticated onboarding and recovery users have no OIDC token yet, so Graph checks direct membership in the configured NativeUsers group before creating scoped request context. Nested/transitive group membership is intentionally not a substitute. |
 | Verified ID issuance | Issuance embeds the bound object ID and employee ID into the dedicated v2 credential contract. |
 | Verified ID presentation | Presentation validates issuer DID, credential type, linked domain, validity window, revocation status, object ID, and employee ID. |
 | State | Request state, rate limits, audit events, and session state are stored durably in Azure Table Storage. |

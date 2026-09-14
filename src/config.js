@@ -41,6 +41,10 @@ function isProtectionKey(value) {
   }
 }
 
+function isAppRoleValue(value) {
+  return /^[A-Za-z][A-Za-z0-9_.:-]{2,119}$/.test(String(value || ''));
+}
+
 const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
 
 const config = {
@@ -120,6 +124,10 @@ const config = {
     authorization: {
       adminGroupId: process.env.V2_ADMIN_GROUP_ID || '',
       usersGroupId: process.env.V2_USERS_GROUP_ID || '',
+      adminRoleValue: process.env.V2_ADMIN_ROLE_VALUE ||
+        'VerifiedId.Onboarding.Admin',
+      userRoleValue: process.env.V2_USER_ROLE_VALUE ||
+        'VerifiedId.Onboarding.User',
     },
     verifiedId: {
       authority: process.env.V2_VERIFIED_ID_AUTHORITY || '',
@@ -264,6 +272,12 @@ function validateRuntimeConfiguration() {
   }
   if (!config.demoMode && !isGuid(v2.authorization.usersGroupId)) {
     errors.push('V2_USERS_GROUP_ID must be the immutable NativeUsers group object ID.');
+  }
+  if (!isAppRoleValue(v2.authorization.adminRoleValue)) {
+    errors.push('V2_ADMIN_ROLE_VALUE must be a stable manager OIDC app role value.');
+  }
+  if (!isAppRoleValue(v2.authorization.userRoleValue)) {
+    errors.push('V2_USER_ROLE_VALUE must be a stable manager OIDC app role value.');
   }
   if (!isHttpsUrl(managerOidc.redirectUri) && !config.demoMode) {
     errors.push('V2_MANAGER_OIDC_REDIRECT_URI must use HTTPS.');

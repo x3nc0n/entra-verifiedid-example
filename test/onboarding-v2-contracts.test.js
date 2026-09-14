@@ -70,6 +70,8 @@ test('builds the exact employee and manager expansion query', async () => {
     'UserAuthMethod-TAP.ReadWrite.All',
     'UserAuthMethod-Passkey.Read.All',
   ]);
+  assert.match(source, /\/groups\/\$\{encodedGroup\}\/members\/\$\{encodedUser\}\/\$ref/);
+  assert.doesNotMatch(source, /checkMemberGroups/);
   assert.equal(typeof graphService.getEmployeeWithManager, 'function');
 });
 
@@ -179,6 +181,7 @@ test('protects transient PIN and TAP values with authenticated encryption', () =
 
 test('validates manager OIDC tid, oid, audience, issuer, nonce, and time', () => {
   const now = Math.floor(Date.now() / 1000);
+  config.selfServiceV2.authorization.userRoleValue = 'VerifiedId.Onboarding.User';
   const manager = managerAuthService.validateIdTokenClaims(
     {
       tid: config.azure.tenantId,
@@ -186,6 +189,7 @@ test('validates manager OIDC tid, oid, audience, issuer, nonce, and time', () =>
       aud: config.selfServiceV2.managerOidc.clientId,
       iss: `https://login.microsoftonline.com/${config.azure.tenantId}/v2.0`,
       nonce: 'expected-nonce',
+      roles: ['VerifiedId.Onboarding.User'],
       nbf: now - 60,
       exp: now + 300,
     },
@@ -196,6 +200,19 @@ test('validates manager OIDC tid, oid, audience, issuer, nonce, and time', () =>
     }
   );
   assert.equal(manager.objectId, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  assert.deepEqual(manager.roles, ['VerifiedId.Onboarding.User']);
+  assert.equal(
+    managerAuthService.hasRole(manager, 'VerifiedId.Onboarding.User'),
+    true
+  );
+  assert.throws(
+    () => managerAuthService.requireRole(
+      { ...manager, roles: [] },
+      'VerifiedId.Onboarding.User',
+      'The signed-in account is not assigned to the user app role.'
+    ),
+    /user app role/
+  );
   assert.throws(
     () => managerAuthService.validateIdTokenClaims(
       {
@@ -241,6 +258,8 @@ test('exposes only the canonical v2 routes and root redirect', () => {
   assert.doesNotMatch(appSource, /requireV2Enabled/);
   assert.doesNotMatch(appSource, /indexRouter|onboardingRouter|invitationsRouter|recoveryRouter|verificationRouter|passkeyRouter/);
   assert.doesNotMatch(configSource, /ASSURANCE_MODE|SELF_SERVICE_V2_ENABLED|ONBOARDING_APPROVAL_API_KEY|INVITATION_LIFETIME_MINUTES|INVITATION_MAX_ATTEMPTS/);
+  assert.match(managerSource, /authorization\.adminRoleValue/);
+  assert.match(managerSource, /authorization\.userRoleValue/);
 
   [
     '/v2/onboarding',

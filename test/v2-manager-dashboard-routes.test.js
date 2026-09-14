@@ -102,6 +102,7 @@ test('manager invitation rejects employees outside the manager direct reports', 
       managerObjectId: 'manager-oid',
       tenantId: 'tenant-id',
       displayName: 'Manager',
+      roles: [config.selfServiceV2.authorization.userRoleValue],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
     sessionState.v2Csrf = { 'manager-dashboard': 'csrf-token' };
@@ -155,6 +156,7 @@ test('manager invitation returns an employee invite link for a direct report', a
       managerObjectId: 'manager-oid',
       tenantId: 'tenant-id',
       displayName: 'Manager',
+      roles: [config.selfServiceV2.authorization.userRoleValue],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
     sessionState.v2Csrf = { 'manager-dashboard': 'csrf-token' };
@@ -184,7 +186,7 @@ test('manager invitation returns an employee invite link for a direct report', a
   }
 });
 
-test('portal admin and native user checks use configured security group IDs', async () => {
+test('bootstrap eligibility checks use configured direct security group IDs', async () => {
   const originals = {
     adminGroupId: config.selfServiceV2.authorization.adminGroupId,
     usersGroupId: config.selfServiceV2.authorization.usersGroupId,
@@ -197,13 +199,13 @@ test('portal admin and native user checks use configured security group IDs', as
   const checks = [];
   try {
     await graphService.requirePortalAdmin('admin-oid', {
-      isUserInGroup: async (userId, groupId) => {
+      isUserDirectMemberOfGroup: async (userId, groupId) => {
         checks.push({ userId, groupId });
         return true;
       },
     });
     await graphService.requireNativeUser('user-oid', {
-      isUserInGroup: async (userId, groupId) => {
+      isUserDirectMemberOfGroup: async (userId, groupId) => {
         checks.push({ userId, groupId });
         return true;
       },
@@ -225,17 +227,11 @@ test('portal admin and native user checks use configured security group IDs', as
   }
 });
 
-test('admin reset rechecks portal admin group and forwards scoped ETag reset', async () => {
+test('admin reset uses portal admin app role session and forwards scoped ETag reset', async () => {
   const originals = {
-    requirePortalAdmin: graphService.requirePortalAdmin,
     adminResetRequest: onboardingService.adminResetRequest,
   };
-  let checkedAdminObjectId = null;
   let resetInput = null;
-  graphService.requirePortalAdmin = async (adminObjectId) => {
-    checkedAdminObjectId = adminObjectId;
-    return true;
-  };
   onboardingService.adminResetRequest = async (requestId, input) => {
     resetInput = { requestId, input };
     return {
@@ -249,6 +245,7 @@ test('admin reset rechecks portal admin group and forwards scoped ETag reset', a
     sessionState.v2PortalAdmin = {
       adminObjectId: 'admin-oid',
       tenantId: 'tenant-id',
+      roles: [config.selfServiceV2.authorization.adminRoleValue],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
     sessionState.v2Csrf = { 'portal-admin': 'csrf-token' };
@@ -271,9 +268,8 @@ test('admin reset rechecks portal admin group and forwards scoped ETag reset', a
         },
       }
     );
-
     assert.equal(response.statusCode, 200);
-    assert.equal(checkedAdminObjectId, 'admin-oid');
+    assert.equal(response.statusCode, 200);
     assert.deepEqual(resetInput, {
       requestId: 'request-1',
       input: {
@@ -285,9 +281,6 @@ test('admin reset rechecks portal admin group and forwards scoped ETag reset', a
     });
   } finally {
     await new Promise((resolve) => server.close(resolve));
-    Object.assign(graphService, {
-      requirePortalAdmin: originals.requirePortalAdmin,
-    });
     Object.assign(onboardingService, {
       adminResetRequest: originals.adminResetRequest,
     });
