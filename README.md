@@ -251,7 +251,12 @@ those workflows are being updated in the same reviewed infra PR.
    The template does not create these groups or infer them from display names.
    For GitHub Actions deployments, set the corresponding variables separately
    in each deployment environment; repository-specific values are not template defaults.
-   Resolve and verify the IDs with the read-only interactive bootstrap:
+   Resolve and verify the IDs with the GET-only interactive bootstrap.
+   **Prerequisite:** verify that delegated `User.Read` and `Group.Read.All`
+   already have consent for the Microsoft Graph PowerShell client in your tenant.
+   `-ExistingConsentConfirmed` attests to that prerequisite; it does not grant
+   consent or verify the grant automatically. **Cancel any consent prompt.**
+   If consent is missing, stop and obtain separate authorization before setup.
 
    ```powershell
    .\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 `
@@ -259,14 +264,17 @@ those workflows are being updated in the same reviewed infra PR.
      -ExpectedAccount "<authorized-operator-upn>" `
      -AdminGroup "<exact-admin-group-name-or-object-id>" `
      -UsersGroup "<exact-users-group-name-or-object-id>" `
-     -ManagerAppClientId "<manager-app-client-id>"
+     -ManagerAppClientId "<manager-app-client-id>" `
+     -ExistingConsentConfirmed
    ```
 
    The bootstrap requests only delegated `User.Read` and `Group.Read.All`,
    validates the authenticated tenant and account after sign-in, follows Graph
    pagination, and rejects missing, ambiguous, or non-security groups. It does
-   not change the app registration, assignments, consent, credentials, or
-   Azure resources. Use `-UseDeviceCode` when a browser cannot be opened and
+   not change the app registration, assignments, credentials, or Azure resources.
+   Interactive authentication can offer persistent consent changes; the script
+   cannot prevent an operator accepting them, so cancel rather than approve.
+   Use `-UseDeviceCode` when a browser cannot be opened and
    complete the Microsoft device prompt immediately.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.

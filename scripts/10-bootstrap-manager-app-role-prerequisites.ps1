@@ -4,13 +4,17 @@
 Authenticates interactively and resolves the security groups used by manager app roles.
 
 .DESCRIPTION
-This bootstrap is read-only. It requests only delegated User.Read and
+This bootstrap makes GET-only Graph requests. It requests only delegated User.Read and
 Group.Read.All, verifies the authenticated tenant and account after sign-in,
 and resolves the administrator and users security groups by exact display name
 or immutable object ID.
 
 It does not update an app registration, create a service principal, assign an
-Enterprise App role, grant consent, create credentials, or change Azure data.
+Enterprise App role, create credentials, or change Azure data.
+Pre-existing consent for both scopes on the Microsoft Graph PowerShell client
+is required. Interactive authentication can present a consent prompt: cancel it.
+Granting consent is a persistent change requiring separate authorization; this
+script cannot suppress or safely complete that prompt on the operator's behalf.
 Use scripts/09-configure-manager-app-role-assignments.ps1 only after a separate
 authorization for those directory writes.
 
@@ -34,7 +38,12 @@ read or changed by this script.
 
 .PARAMETER UseDeviceCode
 Use the Microsoft device-code flow instead of opening the interactive browser.
-The operator must complete sign-in, MFA, and any consent prompt.
+The operator must complete sign-in and MFA, but cancel any consent prompt.
+
+.PARAMETER ExistingConsentConfirmed
+Attest that User.Read and Group.Read.All were already approved for the Microsoft
+Graph PowerShell client in the target tenant. This is not authorization to grant
+consent and is not programmatic verification of an existing grant.
 
 .PARAMETER AsJson
 Emit the verified non-secret tenant, account, and group identifiers as JSON.
@@ -58,11 +67,17 @@ param(
 
     [switch]$UseDeviceCode,
 
+    [switch]$ExistingConsentConfirmed,
+
     [switch]$AsJson
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not $ExistingConsentConfirmed) {
+    throw 'Pre-existing User.Read and Group.Read.All consent is required. Verify it separately before using -ExistingConsentConfirmed. Cancel any consent prompt; obtain separate authorization instead.'
+}
 
 . (Join-Path $PSScriptRoot 'helpers/manager-app-role-bootstrap.ps1')
 
@@ -91,6 +106,7 @@ if ($UseDeviceCode) {
     $connectParameters.UseDeviceCode = $true
 }
 
+Write-Warning 'Cancel any consent prompt. Only sign-in/MFA using previously approved permissions is authorized here; this script cannot prevent consent changes made in the authentication UI.'
 Connect-MgGraph @connectParameters
 
 $context = Get-MgContext

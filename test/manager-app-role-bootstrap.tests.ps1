@@ -156,6 +156,19 @@ if ($resolved.Id -ne $usersId -or $resolved.DisplayName -ne 'Portal Users') {
 
 $bootstrapPath = Join-Path $PSScriptRoot '../scripts/10-bootstrap-manager-app-role-prerequisites.ps1'
 $bootstrapSource = Get-Content -LiteralPath $bootstrapPath -Raw
+Assert-ThrowsLike {
+    & $bootstrapPath -TenantId '11111111-1111-1111-1111-111111111111' `
+        -ExpectedAccount 'operator@example.invalid' -AdminGroup 'Admins' -UsersGroup 'Users'
+} 'Pre-existing User\.Read and Group\.Read\.All consent is required'
+if ($bootstrapSource.IndexOf('if (-not $ExistingConsentConfirmed)') -gt
+    $bootstrapSource.IndexOf('Import-Module Microsoft.Graph.Authentication')) {
+    throw 'Consent prerequisite guard must run before loading Graph authentication.'
+}
+if ($bootstrapSource.IndexOf("Write-Warning 'Cancel any consent prompt.") -lt 0 -or
+    $bootstrapSource.IndexOf("Write-Warning 'Cancel any consent prompt.") -gt
+    $bootstrapSource.IndexOf('Connect-MgGraph @connectParameters')) {
+    throw 'Consent cancellation warning must precede interactive authentication.'
+}
 $forbiddenPatterns = @(
     'Invoke-MgGraphRequest\s+-Method\s+(POST|PATCH|PUT|DELETE)',
     '\b(New|Update|Remove)-Mg',
