@@ -1,18 +1,19 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-Authenticates interactively and resolves the security groups used by manager app roles.
+Authenticates with the Azure CLI system browser and resolves the security groups used by manager app roles.
 
 .DESCRIPTION
-This bootstrap makes GET-only Graph requests. It requests only delegated User.Read and
-Group.Read.All, verifies the authenticated tenant and account after sign-in,
-and resolves the administrator and users security groups by exact display name
-or immutable object ID.
+This bootstrap uses the Azure CLI system-browser sign-in and makes only GET
+requests through 'az rest'. It verifies the tenant and account from 'az account
+show', then verifies the actual signed-in Graph identity with GET /v1.0/me before
+resolving the administrator and users security groups by exact display name or
+immutable object ID.
 
 It does not update an app registration, create a service principal, assign an
 Enterprise App role, create credentials, or change Azure data.
-Pre-existing consent for both scopes on the Microsoft Graph PowerShell client
-is required. Interactive authentication can present a consent prompt: cancel it.
+Pre-existing delegated Graph read consent for the Azure CLI client is required.
+Interactive authentication can present a new consent prompt: cancel it.
 Granting consent is a persistent change requiring separate authorization; this
 script cannot suppress or safely complete that prompt on the operator's behalf.
 Use scripts/09-configure-manager-app-role-assignments.ps1 only after a separate
@@ -22,8 +23,8 @@ authorization for those directory writes.
 Immutable Entra tenant ID expected after interactive authentication.
 
 .PARAMETER ExpectedAccount
-Exact account expected in the authenticated Microsoft Graph context. Login hints
-are not accepted as proof; the resulting context and /me response are validated.
+Exact account expected in the Azure CLI account context. The resulting account
+and /me response are validated.
 
 .PARAMETER AdminGroup
 Exact display name or immutable object ID of the administrator security group.
@@ -36,14 +37,20 @@ Optional manager OIDC application client ID. When supplied, it is validated and
 included in the printed, separately authorized follow-on command. The app is not
 read or changed by this script.
 
+.PARAMETER ReuseExistingLogin
+Reuse the current Azure CLI login without starting a new browser sign-in. The
+tenant, account, and Graph /me identity are still verified before group reads.
+
 .PARAMETER UseDeviceCode
-Use the Microsoft device-code flow instead of opening the interactive browser.
-The operator must complete sign-in and MFA, but cancel any consent prompt.
+Explicitly use the Azure CLI device-code flow instead of the default system
+browser. This is not automatic fallback; Conditional Access or tenant/location
+policy may disallow device-code authentication.
 
 .PARAMETER ExistingConsentConfirmed
-Attest that User.Read and Group.Read.All were already approved for the Microsoft
-Graph PowerShell client in the target tenant. This is not authorization to grant
-consent and is not programmatic verification of an existing grant.
+Attest that delegated User.Read and Group.Read.All were already approved for the
+Azure CLI client in the target tenant. This is not authorization to grant
+consent and is not programmatic verification of an existing grant. Consent for
+Microsoft Graph PowerShell does not satisfy this Azure CLI prerequisite.
 
 .PARAMETER AsJson
 Emit the verified non-secret tenant, account, and group identifiers as JSON.
@@ -64,6 +71,8 @@ param(
     [string]$UsersGroup,
 
     [string]$ManagerAppClientId,
+
+    [switch]$ReuseExistingLogin,
 
     [switch]$UseDeviceCode,
 
@@ -88,49 +97,80 @@ if (-not [string]::IsNullOrWhiteSpace($ManagerAppClientId) -and
     -not (Test-EntraObjectId -Value $ManagerAppClientId)) {
     throw 'ManagerAppClientId must be an application client ID GUID.'
 }
-if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
-    throw 'Microsoft.Graph.Authentication is required. Install-Module Microsoft.Graph -Scope CurrentUser.'
+if ($ReuseExistingLogin -and $UseDeviceCode) {
+    throw '-ReuseExistingLogin and -UseDeviceCode cannot be used together.'
+}
+$commandInvoker = {
+    param([string[]]$Arguments)
+    $output = (& az @Arguments 2>&1 | Out-String)
+    [pscustomobject]@{
+        ExitCode = $LASTEXITCODE
+        Output = $output
+    }
 }
 
-Import-Module Microsoft.Graph.Authentication
+$brokerVariable = 'AZURE_CORE_ENABLE_BROKER_ON_WINDOWS'
+$loginExperienceVariable = 'AZURE_CORE_LOGIN_EXPERIENCE_V2'
+$originalBrokerValue = [Environment]::GetEnvironmentVariable($brokerVariable, 'Process')
+$originalLoginExperienceValue = [Environment]::GetEnvironmentVariable($loginExperienceVariable, 'Process')
 
-$requiredScopes = @('User.Read', 'Group.Read.All')
-$connectParameters = @{
-    TenantId = $TenantId
-    Scopes = $requiredScopes
-    LoginHint = $ExpectedAccount
-    ContextScope = 'Process'
-    NoWelcome = $true
+try {
+    [Environment]::SetEnvironmentVariable($brokerVariable, 'false', 'Process')
+    [Environment]::SetEnvironmentVariable($loginExperienceVariable, 'off', 'Process')
+
+    if (-not $ReuseExistingLogin) {
+        Write-Warning 'Cancel any new consent prompt. Only the previously authorized Azure CLI Graph read access is allowed; this script cannot prevent consent changes made in the authentication UI.'
+        $loginArguments = @(
+            'login',
+            '--tenant',
+            $TenantId,
+            '--allow-no-subscriptions'
+        )
+        if ($UseDeviceCode) {
+            Write-Warning 'Device-code authentication was explicitly selected. Tenant Conditional Access or location policy may disallow this flow; this script will not fall back automatically.'
+            $loginArguments += '--use-device-code'
+        }
+        $loginArguments += @('--output', 'none')
+        Invoke-AzureCliCommand `
+            -Arguments $loginArguments `
+            -CommandInvoker $commandInvoker | Out-Null
+    }
+
+    $account = ConvertFrom-AzureCliJson `
+        -Arguments @('account', 'show', '--output', 'json') `
+        -CommandInvoker $commandInvoker
+    $profile = ConvertFrom-AzureCliJson `
+        -Arguments @('rest', '--method', 'GET', '--url', 'https://graph.microsoft.com/v1.0/me', '--output', 'json') `
+        -CommandInvoker $commandInvoker
+    $identity = Assert-ExpectedAzureCliIdentity `
+        -Account $account `
+        -Profile $profile `
+        -TenantId $TenantId `
+        -ExpectedAccount $ExpectedAccount
+
+    $requestInvoker = {
+        param([string]$Uri)
+        $graphUrl = if ($Uri -match '^https?://') {
+            $Uri
+        } else {
+            "https://graph.microsoft.com$Uri"
+        }
+        ConvertFrom-AzureCliJson `
+            -Arguments @('rest', '--method', 'GET', '--url', $graphUrl, '--output', 'json') `
+            -CommandInvoker $commandInvoker
+    }
+    $adminGroupResult = Resolve-ExactSecurityGroup `
+        -Selector $AdminGroup `
+        -Purpose 'administrator' `
+        -RequestInvoker $requestInvoker
+    $usersGroupResult = Resolve-ExactSecurityGroup `
+        -Selector $UsersGroup `
+        -Purpose 'users' `
+        -RequestInvoker $requestInvoker
+} finally {
+    [Environment]::SetEnvironmentVariable($brokerVariable, $originalBrokerValue, 'Process')
+    [Environment]::SetEnvironmentVariable($loginExperienceVariable, $originalLoginExperienceValue, 'Process')
 }
-if ($UseDeviceCode) {
-    $connectParameters.UseDeviceCode = $true
-}
-
-Write-Warning 'Cancel any consent prompt. Only sign-in/MFA using previously approved permissions is authorized here; this script cannot prevent consent changes made in the authentication UI.'
-Connect-MgGraph @connectParameters
-
-$context = Get-MgContext
-Assert-RequiredGraphScopes -Context $context -RequiredScopes $requiredScopes
-
-$requestInvoker = {
-    param([string]$Uri)
-    Invoke-MgGraphRequest -Method GET -Uri $Uri -ErrorAction Stop
-}
-$profile = & $requestInvoker '/v1.0/me?$select=id,userPrincipalName'
-$identity = Assert-ExpectedGraphIdentity `
-    -Context $context `
-    -Profile $profile `
-    -TenantId $TenantId `
-    -ExpectedAccount $ExpectedAccount
-
-$adminGroupResult = Resolve-ExactSecurityGroup `
-    -Selector $AdminGroup `
-    -Purpose 'administrator' `
-    -RequestInvoker $requestInvoker
-$usersGroupResult = Resolve-ExactSecurityGroup `
-    -Selector $UsersGroup `
-    -Purpose 'users' `
-    -RequestInvoker $requestInvoker
 
 if ([string]::Equals(
     $adminGroupResult.Id,

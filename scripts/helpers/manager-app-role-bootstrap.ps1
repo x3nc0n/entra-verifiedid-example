@@ -10,6 +10,105 @@ function Test-EntraObjectId {
     return $Value -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 }
 
+function Invoke-AzureCliCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$CommandInvoker
+    )
+
+    $execution = & $CommandInvoker $Arguments
+    if ($null -eq $execution) {
+        throw "Azure CLI command returned no execution result: az $($Arguments -join ' ')"
+    }
+
+    $exitCode = [int]$execution.ExitCode
+    $output = [string]$execution.Output
+    if ($exitCode -ne 0) {
+        $detail = $output.Trim()
+        if ([string]::IsNullOrWhiteSpace($detail)) {
+            $detail = 'no diagnostic output'
+        }
+        throw "Azure CLI command failed with exit code ${exitCode}: az $($Arguments -join ' '). $detail"
+    }
+
+    return $output
+}
+
+function ConvertFrom-AzureCliJson {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$CommandInvoker
+    )
+
+    $output = Invoke-AzureCliCommand -Arguments $Arguments -CommandInvoker $CommandInvoker
+    try {
+        return $output | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Azure CLI returned invalid JSON for 'az $($Arguments -join ' ')': $($_.Exception.Message)"
+    }
+}
+
+function Assert-ExpectedAzureCliIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Account,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Profile,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TenantId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedAccount
+    )
+
+    if (-not (Test-EntraObjectId -Value $TenantId)) {
+        throw 'TenantId must be an immutable Entra tenant ID GUID.'
+    }
+
+    $actualTenantId = [string]$Account.tenantId
+    if (-not [string]::Equals($actualTenantId, $TenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Authenticated tenant mismatch. Expected '$TenantId'; received '$actualTenantId'."
+    }
+
+    $actualAccount = [string]$Account.user.name
+    if ([string]::IsNullOrWhiteSpace($actualAccount)) {
+        throw 'Azure CLI account context did not identify an authenticated user.'
+    }
+    if (-not [string]::Equals($actualAccount, $ExpectedAccount, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Authenticated account mismatch. Expected '$ExpectedAccount'; received '$actualAccount'."
+    }
+
+    $profileAccount = [string]$Profile.userPrincipalName
+    if ([string]::IsNullOrWhiteSpace($profileAccount)) {
+        throw 'Microsoft Graph /me did not return the authenticated user principal name.'
+    }
+    if (-not [string]::Equals($profileAccount, $ExpectedAccount, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Microsoft Graph /me account mismatch. Expected '$ExpectedAccount'; received '$profileAccount'."
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$Profile.id)) {
+        throw 'Microsoft Graph /me did not return an authenticated user object ID.'
+    }
+
+    return [pscustomobject]@{
+        TenantId = $actualTenantId
+        Account = $actualAccount
+        ObjectId = [string]$Profile.id
+        UserPrincipalName = [string]$Profile.userPrincipalName
+    }
+}
+
 function Assert-ExpectedGraphIdentity {
     [CmdletBinding()]
     param(
@@ -164,9 +263,8 @@ function Resolve-ExactSecurityGroup {
         throw "$Purpose group selector must be an exact display name or immutable object ID."
     }
 
-    $select = 'id,displayName,securityEnabled,mailEnabled,groupTypes'
     if (Test-EntraObjectId -Value $Selector) {
-        $uri = "/v1.0/groups/$Selector`?`$select=$select"
+        $uri = "/v1.0/groups/$Selector"
         try {
             $candidate = & $RequestInvoker $uri
         } catch {
@@ -176,7 +274,9 @@ function Resolve-ExactSecurityGroup {
     } else {
         $escapedName = $Selector.Replace("'", "''")
         $encodedFilter = [System.Uri]::EscapeDataString("displayName eq '$escapedName'")
-        $uri = "/v1.0/groups?`$select=$select&`$filter=$encodedFilter&`$top=100"
+        # Keep the URL to one query parameter so PowerShell cannot pass an
+        # unquoted ampersand to az.cmd on Windows.
+        $uri = "/v1.0/groups?%24filter=$encodedFilter"
         $candidates = @(Get-GraphCollection -Uri $uri -RequestInvoker $RequestInvoker |
             Where-Object {
                 [string]::Equals(

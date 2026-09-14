@@ -251,11 +251,12 @@ those workflows are being updated in the same reviewed infra PR.
    The template does not create these groups or infer them from display names.
    For GitHub Actions deployments, set the corresponding variables separately
    in each deployment environment; repository-specific values are not template defaults.
-   Resolve and verify the IDs with the GET-only interactive bootstrap.
+   Resolve and verify the IDs with the GET-only Azure CLI system-browser bootstrap.
    **Prerequisite:** verify that delegated `User.Read` and `Group.Read.All`
-   already have consent for the Microsoft Graph PowerShell client in your tenant.
+   already have consent for the Azure CLI client in your tenant. Consent for
+   Microsoft Graph PowerShell does not satisfy this prerequisite.
    `-ExistingConsentConfirmed` attests to that prerequisite; it does not grant
-   consent or verify the grant automatically. **Cancel any consent prompt.**
+   consent or verify the grant automatically. **Cancel any new consent prompt.**
    If consent is missing, stop and obtain separate authorization before setup.
 
    ```powershell
@@ -268,14 +269,20 @@ those workflows are being updated in the same reviewed infra PR.
      -ExistingConsentConfirmed
    ```
 
-   The bootstrap requests only delegated `User.Read` and `Group.Read.All`,
-   validates the authenticated tenant and account after sign-in, follows Graph
-   pagination, and rejects missing, ambiguous, or non-security groups. It does
-   not change the app registration, assignments, credentials, or Azure resources.
+   The bootstrap uses the Azure CLI system browser and only the pre-consented
+   delegated Graph read access (`User.Read` and `Group.Read.All`), validates the
+   Azure CLI tenant/account and the actual Graph `/me` identity before group
+   reads, follows Graph pagination, and rejects missing, ambiguous, or
+   non-security groups. It does not change the app registration, assignments,
+   credentials, or Azure resources.
    Interactive authentication can offer persistent consent changes; the script
    cannot prevent an operator accepting them, so cancel rather than approve.
-   Use `-UseDeviceCode` when a browser cannot be opened and
-   complete the Microsoft device prompt immediately.
+   Use `-ReuseExistingLogin` to verify the current Azure CLI login without
+   opening another browser.
+   The system browser is the default and there is no automatic device-code
+   fallback. Other deployers may explicitly use `-UseDeviceCode`, but tenant
+   Conditional Access or location policy may disallow device-code
+   authentication; a failed device-code login stops rather than switching flows.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.
 4. Define these app roles on the manager OIDC app registration, with stable IDs

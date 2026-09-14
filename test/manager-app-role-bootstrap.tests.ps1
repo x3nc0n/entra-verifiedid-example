@@ -49,6 +49,19 @@ Assert-ThrowsLike -Pattern 'Authenticated account mismatch' -Action {
         -TenantId $tenantId `
         -ExpectedAccount 'different@example.test'
 }
+Assert-ThrowsLike -Pattern 'Microsoft Graph /me account mismatch' -Action {
+    Assert-ExpectedAzureCliIdentity `
+        -Account ([pscustomobject]@{
+            tenantId = $tenantId
+            user = [pscustomobject]@{ name = 'operator@example.test' }
+        }) `
+        -Profile ([pscustomobject]@{
+            id = $profile.id
+            userPrincipalName = 'different@example.test'
+        }) `
+        -TenantId $tenantId `
+        -ExpectedAccount 'operator@example.test'
+}
 Assert-ThrowsLike -Pattern 'missing required read scope' -Action {
     Assert-RequiredGraphScopes `
         -Context ([pscustomobject]@{ Scopes = @('User.Read') }) `
@@ -136,6 +149,67 @@ Assert-ThrowsLike -Pattern 'Microsoft Graph read failed.*simulated Graph denial'
         -RequestInvoker $failureInvoker
 }
 
+$commandCalls = [System.Collections.Generic.List[object]]::new()
+$commandInvoker = {
+    param([string[]]$Arguments)
+    $commandCalls.Add(@($Arguments))
+    if ($Arguments[0] -eq 'account') {
+        return [pscustomobject]@{
+            ExitCode = 0
+            Output = '{"tenantId":"11111111-2222-3333-4444-555555555555","user":{"name":"operator@example.test"}}'
+        }
+    }
+    return [pscustomobject]@{
+        ExitCode = 0
+        Output = '{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","userPrincipalName":"operator@example.test"}'
+    }
+}
+$accountResult = ConvertFrom-AzureCliJson `
+    -Arguments @('account', 'show', '--output', 'json') `
+    -CommandInvoker $commandInvoker
+$profileResult = ConvertFrom-AzureCliJson `
+    -Arguments @('rest', '--method', 'GET', '--url', 'https://graph.microsoft.com/v1.0/me', '--output', 'json') `
+    -CommandInvoker $commandInvoker
+$cliIdentity = Assert-ExpectedAzureCliIdentity `
+    -Account $accountResult `
+    -Profile $profileResult `
+    -TenantId $tenantId `
+    -ExpectedAccount 'operator@example.test'
+if ($cliIdentity.Account -ne 'operator@example.test' -or $commandCalls.Count -ne 2) {
+    throw 'Expected Azure CLI account and /me commands to produce the verified identity.'
+}
+Assert-ThrowsLike -Pattern 'Azure CLI command failed with exit code 7.*simulated CLI failure' -Action {
+    Invoke-AzureCliCommand `
+        -Arguments @('account', 'show') `
+        -CommandInvoker {
+            param([string[]]$Arguments)
+            [pscustomobject]@{ ExitCode = 7; Output = 'simulated CLI failure' }
+        }
+}
+
+$groupUris = [System.Collections.Generic.List[string]]::new()
+Resolve-ExactSecurityGroup `
+    -Selector 'Portal Users' `
+    -Purpose 'users' `
+    -RequestInvoker {
+        param([string]$Uri)
+        $groupUris.Add($Uri)
+        [pscustomobject]@{
+            value = @(
+                [pscustomobject]@{
+                    id = $usersId
+                    displayName = 'Portal Users'
+                    securityEnabled = $true
+                    mailEnabled = $false
+                    groupTypes = @()
+                }
+            )
+        }
+    } | Out-Null
+    if ($groupUris.Count -ne 1 -or $groupUris[0] -match '&' -or $groupUris[0] -notmatch '%24filter=') {
+        throw "Group lookup URL is not safe for az.cmd invocation: '$($groupUris -join ',')'."
+}
+
 $successInvoker = {
     param([string]$Uri)
     return [pscustomobject]@{
@@ -160,17 +234,41 @@ Assert-ThrowsLike {
     & $bootstrapPath -TenantId '11111111-1111-1111-1111-111111111111' `
         -ExpectedAccount 'operator@example.invalid' -AdminGroup 'Admins' -UsersGroup 'Users'
 } 'Pre-existing User\.Read and Group\.Read\.All consent is required'
+Assert-ThrowsLike {
+    & $bootstrapPath -TenantId '11111111-1111-1111-1111-111111111111' `
+        -ExpectedAccount 'operator@example.invalid' -AdminGroup 'Admins' -UsersGroup 'Users' `
+        -ExistingConsentConfirmed -ReuseExistingLogin -UseDeviceCode
+} 'cannot be used together'
 if ($bootstrapSource.IndexOf('if (-not $ExistingConsentConfirmed)') -gt
-    $bootstrapSource.IndexOf('Import-Module Microsoft.Graph.Authentication')) {
-    throw 'Consent prerequisite guard must run before loading Graph authentication.'
+    $bootstrapSource.IndexOf('$commandInvoker =')) {
+    throw 'Consent prerequisite guard must run before Azure CLI authentication setup.'
 }
-if ($bootstrapSource.IndexOf("Write-Warning 'Cancel any consent prompt.") -lt 0 -or
-    $bootstrapSource.IndexOf("Write-Warning 'Cancel any consent prompt.") -gt
-    $bootstrapSource.IndexOf('Connect-MgGraph @connectParameters')) {
-    throw 'Consent cancellation warning must precede interactive authentication.'
+if ($bootstrapSource.IndexOf("Write-Warning 'Cancel any new consent prompt.") -lt 0 -or
+    $bootstrapSource.IndexOf("Write-Warning 'Cancel any new consent prompt.") -gt
+    $bootstrapSource.IndexOf('Invoke-AzureCliCommand')) {
+    throw 'Consent cancellation warning must precede Azure CLI browser authentication.'
+}
+foreach ($requiredText in @(
+    '$ReuseExistingLogin',
+    '$UseDeviceCode',
+    'AZURE_CORE_ENABLE_BROKER_ON_WINDOWS',
+    'AZURE_CORE_LOGIN_EXPERIENCE_V2',
+    'allow-no-subscriptions',
+    '--use-device-code',
+    'Assert-ExpectedAzureCliIdentity',
+    'finally'
+)) {
+    if ($bootstrapSource.IndexOf($requiredText) -lt 0) {
+        throw "Bootstrap is missing required Azure CLI behavior '$requiredText'."
+    }
+}
+if ($bootstrapSource.IndexOf('Resolve-ExactSecurityGroup') -lt
+    $bootstrapSource.IndexOf('Assert-ExpectedAzureCliIdentity')) {
+    throw 'Identity verification must precede all group reads.'
 }
 $forbiddenPatterns = @(
-    'Invoke-MgGraphRequest\s+-Method\s+(POST|PATCH|PUT|DELETE)',
+    'Connect-MgGraph',
+    'Invoke-MgGraphRequest',
     '\b(New|Update|Remove)-Mg',
     '\baz\s+(ad|role|storage)\b',
     '\bgh\s+variable\s+set\b',
@@ -179,6 +277,21 @@ $forbiddenPatterns = @(
 foreach ($pattern in $forbiddenPatterns) {
     if ($bootstrapSource -match $pattern) {
         throw "Read-only bootstrap contains forbidden write pattern '$pattern'."
+    }
+    if ($bootstrapSource -match 'catch[\s\S]{0,300}--use-device-code' -or
+        $bootstrapSource -match 'catch[\s\S]{0,300}az login') {
+        throw 'Device-code authentication must not be an automatic fallback.'
+    }
+    if ($bootstrapSource.IndexOf('if ($UseDeviceCode)') -lt
+        $bootstrapSource.IndexOf('$loginArguments =')) {
+        throw 'Device-code flow must be selected only through the explicit switch.'
+    }
+    $loginArgumentSetup = $bootstrapSource.Substring(
+        $bootstrapSource.IndexOf('$loginArguments ='),
+        $bootstrapSource.IndexOf('if ($UseDeviceCode)') - $bootstrapSource.IndexOf('$loginArguments =')
+    )
+    if ($loginArgumentSetup -match 'use-device-code') {
+        throw 'The default Azure CLI login arguments must not request device code.'
     }
 }
 

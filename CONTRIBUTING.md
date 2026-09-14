@@ -70,10 +70,11 @@ The portal is available at `http://localhost:3000`.
 To test live user lookup, manager approval, Verified ID issuance/presentation,
 TAP creation, and passkey confirmation, complete the tenant bootstrap for the
 v2 self-service flow. Resolve the manager app-role groups first with the
-GET-only interactive bootstrap. First verify pre-existing consent for delegated
-`User.Read` and `Group.Read.All` on the Microsoft Graph PowerShell client in
-the target tenant. **Cancel any consent prompt** and obtain separate authorization
-if consent is missing. `-ExistingConsentConfirmed` only attests to that prerequisite;
+GET-only Azure CLI system-browser bootstrap. First verify pre-existing delegated
+`User.Read` and `Group.Read.All` consent for the Azure CLI client in the target
+tenant. Consent for Microsoft Graph PowerShell does not satisfy this prerequisite.
+**Cancel any new consent prompt** and obtain separate authorization if consent is
+missing. `-ExistingConsentConfirmed` only attests to that prerequisite;
 it does not grant consent or automatically verify the grant:
 
 ```powershell
@@ -85,13 +86,21 @@ it does not grant consent or automatically verify the grant:
   -ManagerAppClientId "<manager-app-client-id>" `
   -ExistingConsentConfirmed
 
+# Verify the current login without opening a new browser:
+# .\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 ... -ReuseExistingLogin
+
 Connect-AzAccount -Tenant "<your-tenant-id>"
 .\scripts\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-sub-id>" -DemoMode $false
 ```
 
-The group bootstrap requests only delegated `User.Read` and `Group.Read.All`
-and issues only GET requests. Authentication can offer persistent consent changes;
+The group bootstrap uses the Azure CLI system browser and only the pre-consented
+delegated Graph read access (`User.Read` and `Group.Read.All`), and issues only
+GET requests. Authentication can offer persistent consent changes;
 the script cannot prevent the operator accepting them, so cancel any such prompt.
+The system browser is the default and there is no automatic device-code fallback.
+Other deployers may explicitly use `-UseDeviceCode`, but tenant Conditional
+Access or location policy may disallow device-code authentication; a failed
+device-code login stops rather than switching flows.
 App-role definitions and Enterprise App assignments
 require separate authorization and the explicit
 `scripts/09-configure-manager-app-role-assignments.ps1 -ConfirmAssignments`
