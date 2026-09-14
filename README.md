@@ -110,7 +110,7 @@ application.
   skip-manager decisions.
 - Unauthenticated onboarding and recovery bootstrap cannot rely on an OIDC
   token, so the server separately checks direct membership in the configured
-  NativeUsers group before creating request context. Do not substitute nested or
+  users group before creating request context. Do not substitute nested or
   transitive groups for this bootstrap check.
 - Manager dashboard OIDC transaction state is durable, so `form_post`
   callbacks do not rely on SameSite=Strict cookies carrying session-only
@@ -245,17 +245,20 @@ those workflows are being updated in the same reviewed infra PR.
 1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
    `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
    high-entropy secrets.
-2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to immutable Entra security
-   group object IDs. For the Spaid pilot tenant, the deployment targets are
-   JustJohn-SG `80334aae-af17-4a5a-9bca-046c0df39c15` and NativeUsers-SG
-   `914a7e6f-dcc2-438a-bc02-d58d2eb5e87a`; keep these as deployment
-   configuration, not hardcoded runtime names.
+2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to your own tenant's
+   administrator and users security-group object IDs. With **Deploy to Azure**,
+   supply these as `adminGroupId` and `usersGroupId` in the deployment form.
+   The template does not create these groups or infer them from display names.
+   For GitHub Actions deployments, set the corresponding variables separately
+   in each deployment environment; repository-specific values are not template defaults.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.
 4. Define these app roles on the manager OIDC app registration, with stable IDs
    and `allowedMemberTypes: ['User']`, then assign groups on the Enterprise App:
-   `VerifiedId.Onboarding.Admin` for JustJohn-SG and
-   `VerifiedId.Onboarding.User` for NativeUsers-SG. In the Entra admin center:
+   `VerifiedId.Onboarding.Admin` for your administrator group and
+   `VerifiedId.Onboarding.User` for your users group. The Deploy to Azure
+   resource deployment does not grant these Entra assignments; an authorized
+   operator must configure them before live sign-in. In the Entra admin center:
    **Enterprise applications** -> the manager OIDC app -> **Users and groups**
    -> **Add user/group** -> select the group -> select the app role. Group-based
    assignment requires an Entra edition that supports assigning groups to

@@ -96,16 +96,18 @@
     },
     "adminGroupId": {
       "type": "string",
-      "defaultValue": "",
+      "minLength": 36,
+      "maxLength": 36,
       "metadata": {
-        "description": "Immutable object ID of the Entra security group assigned to the manager OIDC Admin app role."
+        "description": "Your tenant's administrator security-group object ID. Assign this group to the manager OIDC Admin app role separately."
       }
     },
     "usersGroupId": {
       "type": "string",
-      "defaultValue": "",
+      "minLength": 36,
+      "maxLength": 36,
       "metadata": {
-        "description": "Immutable object ID of the Entra security group assigned to the manager OIDC User app role and used for tokenless bootstrap eligibility."
+        "description": "Your tenant's users security-group object ID for bootstrap eligibility. Assign this group to the manager OIDC User app role separately."
       }
     },
     "adminRoleValue": {

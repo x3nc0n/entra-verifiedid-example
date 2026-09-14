@@ -41,10 +41,14 @@ param fido2Origin string = ''
 param pilotGroupId string
 
 @description('Immutable object ID of the Entra security group assigned to the manager OIDC Admin app role.')
-param adminGroupId string = ''
+@minLength(36)
+@maxLength(36)
+param adminGroupId string
 
 @description('Immutable object ID of the Entra security group assigned to the manager OIDC User app role and used for tokenless bootstrap eligibility.')
-param usersGroupId string = ''
+@minLength(36)
+@maxLength(36)
+param usersGroupId string
 
 @description('Manager OIDC app role value assigned to portal administrators.')
 param adminRoleValue string = 'VerifiedId.Onboarding.Admin'
