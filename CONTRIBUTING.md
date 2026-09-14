@@ -67,15 +67,29 @@ The portal is available at `http://localhost:3000`.
 
 ### 5. (Optional) Full Entra integration setup
 
-To test live user lookup, manager approval, Verified ID issuance/presentation, TAP creation, and passkey confirmation, complete the tenant bootstrap for the v2 self-service flow.
+To test live user lookup, manager approval, Verified ID issuance/presentation,
+TAP creation, and passkey confirmation, complete the tenant bootstrap for the
+v2 self-service flow. Resolve the manager app-role groups first with the
+read-only interactive bootstrap:
 
 ```powershell
-Connect-AzAccount
-Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All"
+.\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 `
+  -TenantId "<your-tenant-id>" `
+  -ExpectedAccount "<authorized-operator-upn>" `
+  -AdminGroup "<exact-admin-group-name-or-object-id>" `
+  -UsersGroup "<exact-users-group-name-or-object-id>" `
+  -ManagerAppClientId "<manager-app-client-id>"
+
+Connect-AzAccount -Tenant "<your-tenant-id>"
 .\scripts\bootstrap.ps1 -TenantId "<your-tenant-id>" -SubscriptionId "<your-sub-id>" -DemoMode $false
 ```
 
-Then update `.env` with the values output by the script.
+The group bootstrap requests only delegated `User.Read` and `Group.Read.All`
+and performs no writes. App-role definitions and Enterprise App assignments
+require separate authorization and the explicit
+`scripts/09-configure-manager-app-role-assignments.ps1 -ConfirmAssignments`
+workflow documented in the root README. Then update `.env` with the values
+output by the infrastructure bootstrap.
 
 ---
 

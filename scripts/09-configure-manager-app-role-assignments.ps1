@@ -1,15 +1,12 @@
 <#
 .SYNOPSIS
-Defines the v2 manager OIDC Enterprise App roles and assigns the pilot security groups.
+Defines the v2 manager OIDC Enterprise App roles and assigns security groups.
 
 .DESCRIPTION
 This script is intentionally operator-driven. It does not run during deployment.
 It configures stable app-role definitions on the manager OIDC app registration and
-then maps Entra security groups to those roles on the Enterprise App service
-principal:
-
-- JustJohn-SG -> VerifiedId.Onboarding.Admin
-- NativeUsers-SG -> VerifiedId.Onboarding.User
+then maps caller-supplied Entra security groups to those roles on the Enterprise
+App service principal.
 
 Group-based app-role assignment requires an Entra edition that supports assigning
 groups to enterprise applications. Nested group membership is not evaluated for
@@ -127,6 +124,11 @@ function Ensure-GroupRoleAssignment {
 Assert-GuidValue -Name 'ManagerAppClientId' -Value $ManagerAppClientId
 Assert-GuidValue -Name 'AdminGroupId' -Value $AdminGroupId
 Assert-GuidValue -Name 'UsersGroupId' -Value $UsersGroupId
+
+if (-not $ConfirmAssignments) {
+    throw "Refusing to change app roles or assignments without -ConfirmAssignments. Run scripts/10-bootstrap-manager-app-role-prerequisites.ps1 first, then re-run this script with -ConfirmAssignments after separate write authorization."
+}
+
 Ensure-MgGraph
 
 $application = Get-MgApplication -Filter "appId eq '$ManagerAppClientId'" -Property 'id,appId,displayName,appRoles' |

@@ -251,6 +251,23 @@ those workflows are being updated in the same reviewed infra PR.
    The template does not create these groups or infer them from display names.
    For GitHub Actions deployments, set the corresponding variables separately
    in each deployment environment; repository-specific values are not template defaults.
+   Resolve and verify the IDs with the read-only interactive bootstrap:
+
+   ```powershell
+   .\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 `
+     -TenantId "<tenant-id>" `
+     -ExpectedAccount "<authorized-operator-upn>" `
+     -AdminGroup "<exact-admin-group-name-or-object-id>" `
+     -UsersGroup "<exact-users-group-name-or-object-id>" `
+     -ManagerAppClientId "<manager-app-client-id>"
+   ```
+
+   The bootstrap requests only delegated `User.Read` and `Group.Read.All`,
+   validates the authenticated tenant and account after sign-in, follows Graph
+   pagination, and rejects missing, ambiguous, or non-security groups. It does
+   not change the app registration, assignments, consent, credentials, or
+   Azure resources. Use `-UseDeviceCode` when a browser cannot be opened and
+   complete the Microsoft device prompt immediately.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.
 4. Define these app roles on the manager OIDC app registration, with stable IDs
@@ -263,8 +280,24 @@ those workflows are being updated in the same reviewed infra PR.
    -> **Add user/group** -> select the group -> select the app role. Group-based
    assignment requires an Entra edition that supports assigning groups to
    enterprise applications; nested groups do not cascade into the emitted
-   `roles` claim. The tenant licensing prerequisite is user-confirmed for the
-   Spaid pilot, but not independently verified by this repo.
+   `roles` claim. Verify the required tenant licensing before assigning groups.
+   After separate authorization for directory writes, establish a new Graph
+   session with `Application.ReadWrite.All`,
+   `AppRoleAssignment.ReadWrite.All`, and `Group.Read.All`. Review the
+   caller-supplied IDs with `-WhatIf`, then explicitly opt in:
+
+   ```powershell
+   .\scripts\09-configure-manager-app-role-assignments.ps1 `
+     -ManagerAppClientId "<manager-app-client-id>" `
+     -AdminGroupId "<verified-admin-group-object-id>" `
+     -UsersGroupId "<verified-users-group-object-id>" `
+     -ConfirmAssignments `
+     -WhatIf
+   ```
+
+   Remove `-WhatIf` only after reviewing the target tenant, application, groups,
+   stable role IDs, and planned assignments. The script preserves unrelated app
+   roles and existing Enterprise App assignments.
 5. Grant the runtime identity the Graph app roles used by this flow:
    `User.Read.All`, `GroupMember.Read.All`,
    `UserAuthMethod-TAP.ReadWrite.All`, and
