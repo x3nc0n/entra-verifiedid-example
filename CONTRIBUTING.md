@@ -78,13 +78,15 @@ missing. `-ExistingConsentConfirmed` only attests to that prerequisite;
 it does not grant consent or automatically verify the grant:
 
 ```powershell
-.\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 `
+.\scripts\bootstrap-manager-app-roles.ps1 `
   -TenantId "<your-tenant-id>" `
   -ExpectedAccount "<authorized-operator-upn>" `
   -AdminGroup "<exact-admin-group-name-or-object-id>" `
   -UsersGroup "<exact-users-group-name-or-object-id>" `
   -ManagerAppClientId "<manager-app-client-id>" `
-  -ExistingConsentConfirmed
+  -ExistingConsentConfirmed `
+  -ConfirmAssignments `
+  -WhatIf
 
 # Verify the current login without opening a new browser:
 # .\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 ... -ReuseExistingLogin
@@ -101,10 +103,13 @@ The system browser is the default and there is no automatic device-code fallback
 Other deployers may explicitly use `-UseDeviceCode`, but tenant Conditional
 Access or location policy may disallow device-code authentication; a failed
 device-code login stops rather than switching flows.
-App-role definitions and Enterprise App assignments
-require separate authorization and the explicit
-`scripts/09-configure-manager-app-role-assignments.ps1 -ConfirmAssignments`
-workflow documented in the root README. Then update `.env` with the values
+App-role definitions and Enterprise App assignments require separate write
+authorization. Review the complete plan with the public
+`scripts/bootstrap-manager-app-roles.ps1` entry point and `-WhatIf`, then add
+`-ExistingWriteConsentConfirmed` and remove `-WhatIf` for the authorized apply.
+The script never creates a missing Enterprise App and does not remove unrelated
+roles or assignments. The numbered scripts 09 and 10 remain compatibility
+phase scripts, not separate operator chores. Then update `.env` with the values
 output by the infrastructure bootstrap.
 
 ---

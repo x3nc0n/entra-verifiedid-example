@@ -243,24 +243,54 @@ if ($bootstrapSource.IndexOf('if (-not $ExistingConsentConfirmed)') -gt
     $bootstrapSource.IndexOf('$commandInvoker =')) {
     throw 'Consent prerequisite guard must run before Azure CLI authentication setup.'
 }
-if ($bootstrapSource.IndexOf("Write-Warning 'Cancel any new consent prompt.") -lt 0 -or
-    $bootstrapSource.IndexOf("Write-Warning 'Cancel any new consent prompt.") -gt
-    $bootstrapSource.IndexOf('Invoke-AzureCliCommand')) {
-    throw 'Consent cancellation warning must precede Azure CLI browser authentication.'
-}
 foreach ($requiredText in @(
     '$ReuseExistingLogin',
     '$UseDeviceCode',
     'AZURE_CORE_ENABLE_BROKER_ON_WINDOWS',
     'AZURE_CORE_LOGIN_EXPERIENCE_V2',
-    'allow-no-subscriptions',
-    '--use-device-code',
+    'Invoke-AzureCliLogin',
     'Assert-ExpectedAzureCliIdentity',
     'finally'
 )) {
     if ($bootstrapSource.IndexOf($requiredText) -lt 0) {
         throw "Bootstrap is missing required Azure CLI behavior '$requiredText'."
     }
+}
+$helperSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../scripts/helpers/manager-app-role-bootstrap.ps1') -Raw
+if ($helperSource.IndexOf("Write-Warning 'Cancel any new consent prompt.") -lt 0 -or
+    $helperSource.IndexOf('function Invoke-AzureCliLogin') -lt 0) {
+    throw 'Shared CLI login helper must warn before authentication.'
+}
+foreach ($requiredText in @('--use-device-code', '--allow-no-subscriptions', '$ReuseExistingLogin', '$UseDeviceCode')) {
+    if ($helperSource.IndexOf($requiredText) -lt 0) {
+        throw "Shared CLI login helper is missing '$requiredText'."
+    }
+}
+$loginCalls = [System.Collections.Generic.List[object]]::new()
+$loginInvoker = {
+    param([string[]]$Arguments)
+    $loginCalls.Add(@($Arguments))
+    [pscustomobject]@{ ExitCode = 0; Output = '' }
+}
+Invoke-AzureCliLogin `
+    -TenantId $tenantId `
+    -ReuseExistingLogin $false `
+    -UseDeviceCode $false `
+    -CommandInvoker $loginInvoker
+Invoke-AzureCliLogin `
+    -TenantId $tenantId `
+    -ReuseExistingLogin $true `
+    -UseDeviceCode $false `
+    -CommandInvoker $loginInvoker
+Invoke-AzureCliLogin `
+    -TenantId $tenantId `
+    -ReuseExistingLogin $false `
+    -UseDeviceCode $true `
+    -CommandInvoker $loginInvoker
+if ($loginCalls.Count -ne 2 -or
+    ($loginCalls[0] -contains '--use-device-code') -or
+    -not ($loginCalls[1] -contains '--use-device-code')) {
+    throw 'Shared CLI login helper must default to browser, support explicit device code, and skip reuse-existing login.'
 }
 if ($bootstrapSource.IndexOf('Resolve-ExactSecurityGroup') -lt
     $bootstrapSource.IndexOf('Assert-ExpectedAzureCliIdentity')) {
@@ -278,29 +308,43 @@ foreach ($pattern in $forbiddenPatterns) {
     if ($bootstrapSource -match $pattern) {
         throw "Read-only bootstrap contains forbidden write pattern '$pattern'."
     }
-    if ($bootstrapSource -match 'catch[\s\S]{0,300}--use-device-code' -or
-        $bootstrapSource -match 'catch[\s\S]{0,300}az login') {
-        throw 'Device-code authentication must not be an automatic fallback.'
-    }
-    if ($bootstrapSource.IndexOf('if ($UseDeviceCode)') -lt
-        $bootstrapSource.IndexOf('$loginArguments =')) {
-        throw 'Device-code flow must be selected only through the explicit switch.'
-    }
-    $loginArgumentSetup = $bootstrapSource.Substring(
-        $bootstrapSource.IndexOf('$loginArguments ='),
-        $bootstrapSource.IndexOf('if ($UseDeviceCode)') - $bootstrapSource.IndexOf('$loginArguments =')
-    )
-    if ($loginArgumentSetup -match 'use-device-code') {
-        throw 'The default Azure CLI login arguments must not request device code.'
-    }
+}
+if ($helperSource -match 'catch[\s\S]{0,300}--use-device-code' -or
+    $helperSource -match 'catch[\s\S]{0,300}az login') {
+    throw 'Device-code authentication must not be an automatic fallback.'
 }
 
 $assignmentPath = Join-Path $PSScriptRoot '../scripts/09-configure-manager-app-role-assignments.ps1'
 $assignmentSource = Get-Content -LiteralPath $assignmentPath -Raw
-$confirmationIndex = $assignmentSource.IndexOf('if (-not $ConfirmAssignments)')
+$confirmationIndex = $assignmentSource.IndexOf('$ConfirmAssignments')
 $firstWriteIndex = $assignmentSource.IndexOf('Update-MgApplication')
-if ($confirmationIndex -lt 0 -or $firstWriteIndex -lt 0 -or $confirmationIndex -gt $firstWriteIndex) {
-    throw 'The explicit assignment confirmation guard must precede the first app-role write.'
+if ($confirmationIndex -lt 0 -or $firstWriteIndex -ge 0) {
+    throw 'The assignment script must not retain Microsoft Graph PowerShell writes.'
+}
+foreach ($requiredText in @(
+    'SupportsShouldProcess',
+    '$ConfirmAssignments',
+    '$WhatIfPreference',
+    'ExistingWriteConsentConfirmed',
+    'ReuseExistingLogin',
+    'UseDeviceCode',
+    'Assert-ExpectedAzureCliIdentity',
+    'Resolve-ExactSecurityGroup',
+    'Get-ManagerAppRoleAssignmentState',
+    'service principal is absent',
+    "'PATCH'",
+    "'POST'"
+)) {
+    if ($assignmentSource.IndexOf($requiredText) -lt 0) {
+        throw "Assignment script is missing required safety or CLI behavior '$requiredText'."
+    }
+}
+if ($assignmentSource -match 'New-Mg|Update-Mg|Remove-Mg|Connect-MgGraph|Invoke-MgGraphRequest') {
+    throw 'Assignment script must not use Microsoft Graph PowerShell or create/remove objects through SDK cmdlets.'
+}
+if ($assignmentSource -match 'catch[\s\S]{0,300}--use-device-code' -or
+    $assignmentSource -match 'catch[\s\S]{0,300}az login') {
+    throw 'Assignment script must not automatically fall back to device-code authentication.'
 }
 
 Write-Output 'Manager app-role bootstrap tests passed.'

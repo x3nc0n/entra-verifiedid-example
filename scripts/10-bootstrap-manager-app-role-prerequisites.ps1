@@ -118,23 +118,11 @@ try {
     [Environment]::SetEnvironmentVariable($brokerVariable, 'false', 'Process')
     [Environment]::SetEnvironmentVariable($loginExperienceVariable, 'off', 'Process')
 
-    if (-not $ReuseExistingLogin) {
-        Write-Warning 'Cancel any new consent prompt. Only the previously authorized Azure CLI Graph read access is allowed; this script cannot prevent consent changes made in the authentication UI.'
-        $loginArguments = @(
-            'login',
-            '--tenant',
-            $TenantId,
-            '--allow-no-subscriptions'
-        )
-        if ($UseDeviceCode) {
-            Write-Warning 'Device-code authentication was explicitly selected. Tenant Conditional Access or location policy may disallow this flow; this script will not fall back automatically.'
-            $loginArguments += '--use-device-code'
-        }
-        $loginArguments += @('--output', 'none')
-        Invoke-AzureCliCommand `
-            -Arguments $loginArguments `
-            -CommandInvoker $commandInvoker | Out-Null
-    }
+    Invoke-AzureCliLogin `
+        -TenantId $TenantId `
+        -ReuseExistingLogin ([bool]$ReuseExistingLogin) `
+        -UseDeviceCode ([bool]$UseDeviceCode) `
+        -CommandInvoker $commandInvoker
 
     $account = ConvertFrom-AzureCliJson `
         -Arguments @('account', 'show', '--output', 'json') `
@@ -211,12 +199,14 @@ Write-Host 'No app roles or group assignments were changed.'
 
 if (-not [string]::IsNullOrWhiteSpace($ManagerAppClientId)) {
     Write-Host ''
-    Write-Host 'After separate write authorization and a new privileged Graph sign-in, review with -WhatIf first:'
+    Write-Host 'After separate Azure CLI write authorization, reuse this verified login and review with -WhatIf first:'
     Write-Host (
         ".\scripts\09-configure-manager-app-role-assignments.ps1 " +
+        "-TenantId '$TenantId' " +
+        "-ExpectedAccount '$ExpectedAccount' " +
         "-ManagerAppClientId '$ManagerAppClientId' " +
         "-AdminGroupId '$($result.AdminGroup.ObjectId)' " +
         "-UsersGroupId '$($result.UsersGroup.ObjectId)' " +
-        '-ConfirmAssignments -WhatIf'
+        '-ReuseExistingLogin -ConfirmAssignments -WhatIf'
     )
 }

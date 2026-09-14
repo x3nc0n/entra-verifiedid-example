@@ -241,8 +241,22 @@ Do not remove them from `.github/workflows/` in application-only changes unless
 those workflows are being updated in the same reviewed infra PR.
 
 ## Required live integration work
-
-1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
+
+### Supported operator entry points
+
+Use these public actions in order; the numbered scripts are internal phase
+implementations retained for compatibility:
+
+1. `scripts\bootstrap-manager-app-roles.ps1` — discovers the verified tenant,
+   account, security groups, application, and Enterprise App, then previews or
+   explicitly applies the two managed roles and group mappings. It never
+   deploys Azure infrastructure.
+2. `scripts\bootstrap.ps1` — provisions the Azure resources and runtime
+   configuration. It is a separate infrastructure operation and is not invoked
+   by the manager-role entry point.
+3. `npm test` — validates the repository locally.
+
+1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
    `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
    high-entropy secrets.
 2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to your own tenant's
@@ -251,7 +265,7 @@ those workflows are being updated in the same reviewed infra PR.
    The template does not create these groups or infer them from display names.
    For GitHub Actions deployments, set the corresponding variables separately
    in each deployment environment; repository-specific values are not template defaults.
-   Resolve and verify the IDs with the GET-only Azure CLI system-browser bootstrap.
+   Resolve and verify the IDs as part of the public manager-role bootstrap.
    **Prerequisite:** verify that delegated `User.Read` and `Group.Read.All`
    already have consent for the Azure CLI client in your tenant. Consent for
    Microsoft Graph PowerShell does not satisfy this prerequisite.
@@ -259,17 +273,7 @@ those workflows are being updated in the same reviewed infra PR.
    consent or verify the grant automatically. **Cancel any new consent prompt.**
    If consent is missing, stop and obtain separate authorization before setup.
 
-   ```powershell
-   .\scripts\10-bootstrap-manager-app-role-prerequisites.ps1 `
-     -TenantId "<tenant-id>" `
-     -ExpectedAccount "<authorized-operator-upn>" `
-     -AdminGroup "<exact-admin-group-name-or-object-id>" `
-     -UsersGroup "<exact-users-group-name-or-object-id>" `
-     -ManagerAppClientId "<manager-app-client-id>" `
-     -ExistingConsentConfirmed
-   ```
-
-   The bootstrap uses the Azure CLI system browser and only the pre-consented
+   The manager-role bootstrap uses the Azure CLI system browser and only the pre-consented
    delegated Graph read access (`User.Read` and `Group.Read.All`), validates the
    Azure CLI tenant/account and the actual Graph `/me` identity before group
    reads, follows Graph pagination, and rejects missing, ambiguous, or
@@ -285,34 +289,34 @@ those workflows are being updated in the same reviewed infra PR.
    authentication; a failed device-code login stops rather than switching flows.
 3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
    table-scoped access to the session and v2 request tables.
-4. Define these app roles on the manager OIDC app registration, with stable IDs
-   and `allowedMemberTypes: ['User']`, then assign groups on the Enterprise App:
-   `VerifiedId.Onboarding.Admin` for your administrator group and
-   `VerifiedId.Onboarding.User` for your users group. The Deploy to Azure
-   resource deployment does not grant these Entra assignments; an authorized
-   operator must configure them before live sign-in. In the Entra admin center:
-   **Enterprise applications** -> the manager OIDC app -> **Users and groups**
-   -> **Add user/group** -> select the group -> select the app role. Group-based
-   assignment requires an Entra edition that supports assigning groups to
-   enterprise applications; nested groups do not cascade into the emitted
-   `roles` claim. Verify the required tenant licensing before assigning groups.
-   After separate authorization for directory writes, establish a new Graph
-   session with `Application.ReadWrite.All`,
-   `AppRoleAssignment.ReadWrite.All`, and `Group.Read.All`. Review the
-   caller-supplied IDs with `-WhatIf`, then explicitly opt in:
+4. Bootstrap the stable app roles and group mappings with the public manager-role
+   entry point. The first command is a no-write preview; the read-only group
+   lookup does not prove write permission. Separately verify pre-existing Azure
+   CLI consent for the directory write permissions required by an apply:
 
    ```powershell
-   .\scripts\09-configure-manager-app-role-assignments.ps1 `
+   .\scripts\bootstrap-manager-app-roles.ps1 `
+     -TenantId "<tenant-id>" `
+     -ExpectedAccount "<authorized-operator-upn>" `
+     -AdminGroup "<exact-admin-group-name-or-object-id>" `
+     -UsersGroup "<exact-users-group-name-or-object-id>" `
      -ManagerAppClientId "<manager-app-client-id>" `
-     -AdminGroupId "<verified-admin-group-object-id>" `
-     -UsersGroupId "<verified-users-group-object-id>" `
+     -ReuseExistingLogin `
      -ConfirmAssignments `
      -WhatIf
    ```
 
-   Remove `-WhatIf` only after reviewing the target tenant, application, groups,
-   stable role IDs, and planned assignments. The script preserves unrelated app
-   roles and existing Enterprise App assignments.
+   The preview performs GET-only discovery and shows the complete managed role
+   definitions and group mappings, including a missing service principal
+   prerequisite; it never creates the Enterprise App. After reviewing the
+   target tenant, account, application, groups, stable role IDs, and exact
+   payload plan, remove `-WhatIf`, add `-ExistingWriteConsentConfirmed`, and
+   run the same command to apply. Keep `-ConfirmAssignments` on the apply. The
+   script preserves unrelated app roles
+   and existing Enterprise App assignments, and stops on the first failed write.
+   Group-based assignment requires an Entra edition that supports assigning
+   groups to enterprise applications; nested groups do not cascade into the
+   emitted `roles` claim. Verify the required tenant licensing before applying.
 5. Grant the runtime identity the Graph app roles used by this flow:
    `User.Read.All`, `GroupMember.Read.All`,
    `UserAuthMethod-TAP.ReadWrite.All`, and
