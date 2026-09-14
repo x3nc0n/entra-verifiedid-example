@@ -989,6 +989,13 @@ function createOnboardingV2Service(repository) {
   }
 
   async function adminResetRequest(requestId, input) {
+    if (typeof input.etag !== 'string' || !input.etag.trim() || input.etag.trim() === '*') {
+      throw new V2StateError(
+        'A specific request version is required for an admin reset.',
+        'precondition_required',
+        428
+      );
+    }
     if (!['cancel', 'restart', 'unblock'].includes(input.action)) {
       throw new V2StateError('Unsupported admin reset action.', 'invalid_admin_action', 400);
     }
@@ -996,8 +1003,12 @@ function createOnboardingV2Service(repository) {
       throw new V2StateError('A reset reason is required.', 'reason_required', 400);
     }
     return updateRequest(requestId, null, (current) => {
-      if (input.etag && String(current.etag) !== String(input.etag)) {
-        throw new V2ConcurrencyError();
+      if (String(current.etag) !== input.etag) {
+        throw new V2StateError(
+          'The request changed. Reload it before resetting.',
+          'precondition_failed',
+          412
+        );
       }
       if (TERMINAL_STATES.has(current.state)) {
         throw new V2StateError(
