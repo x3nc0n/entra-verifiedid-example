@@ -271,15 +271,55 @@ router.post('/auth/manager/callback', async (req, res) => {
       managerObjectId: authenticatedManager.objectId,
       tenantId: authenticatedManager.tenantId,
     });
-    await regenerateSession(req);
-    req.session.v2Manager = {
-      requestId: flow.request.requestId,
-      managerObjectId: authenticatedManager.objectId,
-      tenantId: authenticatedManager.tenantId,
-      authenticatedAt: new Date().toISOString(),
-    };
-    getCsrfToken(req, 'manager');
-    return res.redirect('/v2/manager/approval');
+
+    // The manager token is now redeemed (one-shot, already consumed above).
+    // Establishing the session is handled in its own try/catch, separate
+    // from the authentication-rejection handling below: a failure here is a
+    // session-persistence problem, not an authorization rejection, and must
+    // not be recorded or reported as one.
+    try {
+      await regenerateSession(req);
+      req.session.v2Manager = {
+        requestId: flow.request.requestId,
+        managerObjectId: authenticatedManager.objectId,
+        tenantId: authenticatedManager.tenantId,
+        authenticatedAt: new Date().toISOString(),
+      };
+      getCsrfToken(req, 'manager');
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => err ? reject(err) : resolve());
+      });
+    } catch (sessionErr) {
+      console.error(
+        '[v2-manager] Manager sign-in succeeded but the session could not be saved.'
+      );
+      req.session = null;
+      return res.status(503).render('v2-manager-approval', {
+        title: 'Manager Sign-In Unavailable',
+        csrfToken: '',
+        activated: false,
+        authenticated: false,
+        request: null,
+        error: 'Sign-in succeeded, but your approval session could not be saved. ' +
+          'Please ask for a new approval link and try again.',
+      });
+    }
+
+    // Do not redirect here. The IdP callback is a genuine cross-site,
+    // top-level POST (response_mode=form_post); a SameSite=Strict cookie
+    // set while handling it is withheld from the whole chain that request
+    // is considered part of, including a same-origin redirect issued from
+    // this same handler. Render a same-origin completion page instead so
+    // the *next* navigation (the visible link, or the script on that page)
+    // starts fresh from an already-loaded same-origin document and carries
+    // the new session cookie normally.
+    return res.render('v2-manager-callback-complete', {
+      title: 'Sign-In Complete',
+      heading: 'Sign-in complete',
+      message: 'You are signed in. Continue to the approval request.',
+      continueHref: '/v2/manager/approval',
+      actionLabel: 'Continue to approval',
+    });
   } catch (err) {
     if (req.body.state) {
       const flow = await onboardingService.loadManagerAuthFlow(req.body.state)
@@ -310,13 +350,21 @@ router.post('/auth/manager/callback', async (req, res) => {
     console.warn(
       `[v2-manager] Manager authentication was rejected; code=${err.code || 'manager_authentication_failed'}`
     );
-    return res.status(403).render('v2-manager-approval', {
+    // Errors the onboarding service already models explicitly (e.g. the
+    // sign-in transaction expired, or the token was reused) carry their own
+    // safe, user-facing message and status. Surface it instead of a blanket
+    // "not authorized" so an expired/replayed link isn't misreported as an
+    // authorization mismatch.
+    const isKnownStateError = err instanceof onboardingService.V2StateError;
+    return res.status(isKnownStateError ? err.status : 403).render('v2-manager-approval', {
       title: 'Manager Sign-In Rejected',
       csrfToken: getCsrfToken(req, 'manager-bootstrap'),
       activated: false,
       authenticated: false,
       request: null,
-      error: 'The signed-in account is not authorized for this approval.',
+      error: isKnownStateError
+        ? err.message
+        : 'The signed-in account is not authorized for this approval.',
     });
   }
 });

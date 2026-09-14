@@ -11,13 +11,14 @@ const managerAuthService = require('../src/services/manager-auth-service');
 const onboardingService = require('../src/services/onboarding-v2-service');
 const router = require('../src/routes/v2-manager');
 
-function createApp(seedSession) {
+function createApp(seedSession, store) {
   const app = express();
   app.use(express.urlencoded({ extended: false }));
   app.use(session({
     secret: 'test-session-secret',
     resave: false,
     saveUninitialized: true,
+    store,
   }));
   app.use((req, res, next) => {
     if (typeof seedSession === 'function') {
@@ -108,14 +109,105 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
       code: 'authorization-code',
     });
 
-    assert.equal(response.statusCode, 302);
-    assert.equal(response.headers.location, '/v2/manager/approval');
+    // The IdP callback is a genuine cross-site, top-level POST
+    // (response_mode=form_post); a same-origin redirect issued from this
+    // same response would still be treated as part of that cross-site
+    // chain, so a SameSite=Strict session cookie would be withheld. The
+    // handler instead ends the chain here with a same-origin 200
+    // completion page whose own follow-up navigation (script or link)
+    // carries the cookie normally.
+    assert.equal(response.statusCode, 200);
+    const parsed = JSON.parse(response.body);
+    assert.equal(parsed.view, 'v2-manager-callback-complete');
+    assert.equal(parsed.model.continueHref, '/v2/manager/approval');
+    assert.match(response.headers['set-cookie'].join('\n'), /connect\.sid=/);
     assert.deepEqual(redemptionFailure, null);
     assert.equal(redeemInput.requestId, '11111111-2222-3333-4444-555555555555');
     assert.equal(
       redeemInput.managerObjectId,
       'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
     );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(onboardingService, {
+      loadManagerAuthFlow: originals.loadManagerAuthFlow,
+      redeemManagerToken: originals.redeemManagerToken,
+      recordManagerRedemptionFailure: originals.recordManagerRedemptionFailure,
+    });
+    Object.assign(managerAuthService, {
+      exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
+    });
+  }
+});
+
+test('manager callback treats a session-persistence failure as distinct from an authorization rejection', async () => {
+  const originals = {
+    loadManagerAuthFlow: onboardingService.loadManagerAuthFlow,
+    redeemManagerToken: onboardingService.redeemManagerToken,
+    recordManagerRedemptionFailure: onboardingService.recordManagerRedemptionFailure,
+    exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+  };
+
+  let redeemInput = null;
+  let redemptionFailureCalled = false;
+  onboardingService.loadManagerAuthFlow = async () => ({
+    nonce: 'expected-nonce',
+    codeVerifier: 'expected-verifier',
+    request: {
+      requestId: '11111111-2222-3333-4444-555555555555',
+      correlationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+      employeeObjectId: '12345678-1234-1234-1234-1234567890ab',
+      employeeUserPrincipalName: 'employee@tenant.example',
+      managerObjectId: '99999999-9999-9999-9999-999999999999',
+      managerTokenHash: 'a'.repeat(64),
+      managerAuthState: 'expected-state',
+    },
+  });
+  managerAuthService.exchangeAuthorizationCode = async () => ({
+    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    displayName: 'Manager',
+  });
+  onboardingService.redeemManagerToken = async (input) => {
+    redeemInput = input;
+  };
+  onboardingService.recordManagerRedemptionFailure = async () => {
+    redemptionFailureCalled = true;
+  };
+
+  let attemptedSession = null;
+  class FailingManagerStore extends session.MemoryStore {
+    set(sid, value, callback) {
+      if (value.v2Manager) {
+        attemptedSession = value;
+        return callback(new Error('session store unavailable'));
+      }
+      return super.set(sid, value, callback);
+    }
+  }
+  const app = createApp(null, new FailingManagerStore());
+  const server = app.listen(0);
+
+  try {
+    const response = await sendForm(server, '/auth/manager/callback', {
+      state: 'state-from-idp',
+      code: 'authorization-code',
+    });
+
+    // The one-shot token was already redeemed successfully; a failure to
+    // persist the resulting session must not be reported as (or recorded
+    // as) an authorization rejection, and must not be a silent/ambiguous
+    // "no token" state either.
+    assert.equal(response.statusCode, 503);
+    assert.equal(redeemInput.requestId, '11111111-2222-3333-4444-555555555555');
+    assert.equal(redemptionFailureCalled, false);
+    assert.equal(attemptedSession.v2Manager.requestId, redeemInput.requestId);
+    assert.ok(attemptedSession.v2Csrf.manager);
+    assert.equal(response.headers['set-cookie'], undefined);
+    const parsed = JSON.parse(response.body);
+    assert.equal(parsed.view, 'v2-manager-approval');
+    assert.match(parsed.model.error, /session could not be saved/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     Object.assign(onboardingService, {

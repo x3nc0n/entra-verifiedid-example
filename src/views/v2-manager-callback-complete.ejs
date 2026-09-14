@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <section class="card">
+        <h1 class="page-title"><%= heading %></h1>
+        <div class="alert alert-success"><%= message %></div>
+        <p>
+          <a class="btn btn-primary" id="managerCallbackContinue" href="<%= continueHref %>"><%= actionLabel %></a>
+        </p>
+      </section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-manager-callback-complete.js" data-continue-href="<%= continueHref %>" defer></script>
+</body>
+</html>
