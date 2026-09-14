@@ -192,9 +192,9 @@ test('bootstrap eligibility checks use configured direct security group IDs', as
     usersGroupId: config.selfServiceV2.authorization.usersGroupId,
   };
   config.selfServiceV2.authorization.adminGroupId =
-    '80334aae-af17-4a5a-9bca-046c0df39c15';
+    '11111111-1111-1111-1111-111111111111';
   config.selfServiceV2.authorization.usersGroupId =
-    '914a7e6f-dcc2-438a-bc02-d58d2eb5e87a';
+    '22222222-2222-2222-2222-222222222222';
 
   const checks = [];
   try {
@@ -214,11 +214,11 @@ test('bootstrap eligibility checks use configured direct security group IDs', as
     assert.deepEqual(checks, [
       {
         userId: 'admin-oid',
-        groupId: '80334aae-af17-4a5a-9bca-046c0df39c15',
+        groupId: '11111111-1111-1111-1111-111111111111',
       },
       {
         userId: 'user-oid',
-        groupId: '914a7e6f-dcc2-438a-bc02-d58d2eb5e87a',
+        groupId: '22222222-2222-2222-2222-222222222222',
       },
     ]);
   } finally {
@@ -268,7 +268,6 @@ test('admin reset uses portal admin app role session and forwards scoped ETag re
         },
       }
     );
-    assert.equal(response.statusCode, 200);
     assert.equal(response.statusCode, 200);
     assert.deepEqual(resetInput, {
       requestId: 'request-1',

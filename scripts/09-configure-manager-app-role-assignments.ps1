@@ -21,9 +21,11 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ManagerAppClientId,
 
-    [string]$AdminGroupId = '80334aae-af17-4a5a-9bca-046c0df39c15',
+    [Parameter(Mandatory = $true)]
+    [string]$AdminGroupId,
 
-    [string]$UsersGroupId = '914a7e6f-dcc2-438a-bc02-d58d2eb5e87a',
+    [Parameter(Mandatory = $true)]
+    [string]$UsersGroupId,
 
     [string]$AdminRoleValue = 'VerifiedId.Onboarding.Admin',
 
