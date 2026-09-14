@@ -6,6 +6,7 @@ const http = require('node:http');
 const express = require('express');
 const session = require('express-session');
 
+const config = require('../src/config');
 const graphService = require('../src/services/graph-service');
 const onboardingService = require('../src/services/onboarding-v2-service');
 const router = require('../src/routes/v2-manager');
@@ -179,6 +180,116 @@ test('manager invitation returns an employee invite link for a direct report', a
     Object.assign(onboardingService, {
       enforceRateLimit: originals.enforceRateLimit,
       createManagerInitiatedRequest: originals.createManagerInitiatedRequest,
+    });
+  }
+});
+
+test('portal admin and native user checks use configured security group IDs', async () => {
+  const originals = {
+    adminGroupId: config.selfServiceV2.authorization.adminGroupId,
+    usersGroupId: config.selfServiceV2.authorization.usersGroupId,
+  };
+  config.selfServiceV2.authorization.adminGroupId =
+    '80334aae-af17-4a5a-9bca-046c0df39c15';
+  config.selfServiceV2.authorization.usersGroupId =
+    '914a7e6f-dcc2-438a-bc02-d58d2eb5e87a';
+
+  const checks = [];
+  try {
+    await graphService.requirePortalAdmin('admin-oid', {
+      isUserInGroup: async (userId, groupId) => {
+        checks.push({ userId, groupId });
+        return true;
+      },
+    });
+    await graphService.requireNativeUser('user-oid', {
+      isUserInGroup: async (userId, groupId) => {
+        checks.push({ userId, groupId });
+        return true;
+      },
+    });
+
+    assert.deepEqual(checks, [
+      {
+        userId: 'admin-oid',
+        groupId: '80334aae-af17-4a5a-9bca-046c0df39c15',
+      },
+      {
+        userId: 'user-oid',
+        groupId: '914a7e6f-dcc2-438a-bc02-d58d2eb5e87a',
+      },
+    ]);
+  } finally {
+    config.selfServiceV2.authorization.adminGroupId = originals.adminGroupId;
+    config.selfServiceV2.authorization.usersGroupId = originals.usersGroupId;
+  }
+});
+
+test('admin reset rechecks portal admin group and forwards scoped ETag reset', async () => {
+  const originals = {
+    requirePortalAdmin: graphService.requirePortalAdmin,
+    adminResetRequest: onboardingService.adminResetRequest,
+  };
+  let checkedAdminObjectId = null;
+  let resetInput = null;
+  graphService.requirePortalAdmin = async (adminObjectId) => {
+    checkedAdminObjectId = adminObjectId;
+    return true;
+  };
+  onboardingService.adminResetRequest = async (requestId, input) => {
+    resetInput = { requestId, input };
+    return {
+      requestId,
+      state: 'requested',
+      updatedAt: '2026-09-14T12:54:49.352-05:00',
+    };
+  };
+
+  const app = createApp((sessionState) => {
+    sessionState.v2PortalAdmin = {
+      adminObjectId: 'admin-oid',
+      tenantId: 'tenant-id',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    sessionState.v2Csrf = { 'portal-admin': 'csrf-token' };
+  });
+  const server = app.listen(0);
+
+  try {
+    const response = await send(
+      server,
+      'POST',
+      '/api/v2/admin/requests/onboarding/request-1/reset',
+      {
+        headers: {
+          'x-csrf-token': 'csrf-token',
+          'if-match': 'etag-1',
+        },
+        body: {
+          action: 'unblock',
+          reason: 'approval session stuck after callback completion',
+        },
+      }
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(checkedAdminObjectId, 'admin-oid');
+    assert.deepEqual(resetInput, {
+      requestId: 'request-1',
+      input: {
+        action: 'unblock',
+        reason: 'approval session stuck after callback completion',
+        etag: 'etag-1',
+        adminObjectId: 'admin-oid',
+      },
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(graphService, {
+      requirePortalAdmin: originals.requirePortalAdmin,
+    });
+    Object.assign(onboardingService, {
+      adminResetRequest: originals.adminResetRequest,
     });
   }
 });
