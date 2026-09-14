@@ -56,9 +56,11 @@ jobs:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
           PILOT_GROUP_ID: ${{ vars.PILOT_GROUP_ID }}
+          V2_ADMIN_GROUP_ID: ${{ vars.V2_ADMIN_GROUP_ID }}
+          V2_USERS_GROUP_ID: ${{ vars.V2_USERS_GROUP_ID }}
         run: |
           echo "Running az deployment group what-if for environment '${{ inputs.environment }}'..."
-          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" demoMode=false)
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" adminGroupId="$V2_ADMIN_GROUP_ID" usersGroupId="$V2_USERS_GROUP_ID" demoMode=false)
           if [ -n "${{ inputs.location }}" ]; then
             parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi
@@ -90,9 +92,11 @@ jobs:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
           PILOT_GROUP_ID: ${{ vars.PILOT_GROUP_ID }}
+          V2_ADMIN_GROUP_ID: ${{ vars.V2_ADMIN_GROUP_ID }}
+          V2_USERS_GROUP_ID: ${{ vars.V2_USERS_GROUP_ID }}
         run: |
           echo "Deploying infra/main.bicep to resource group '$AZURE_RESOURCE_GROUP'..."
-          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" demoMode=false)
+          parameters=(--parameters azureTenantId="$AZURE_TENANT_ID" pilotGroupId="$PILOT_GROUP_ID" adminGroupId="$V2_ADMIN_GROUP_ID" usersGroupId="$V2_USERS_GROUP_ID" demoMode=false)
           if [ -n "${{ inputs.location }}" ]; then
             parameters+=(--parameters containerAppLocation="${{ inputs.location }}")
           fi

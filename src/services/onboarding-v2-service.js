@@ -22,8 +22,10 @@ const REQUEST_PARTITION = 'request';
 const LOCK_PARTITION = 'employee-lock';
 const RATE_PARTITION = 'rate-limit';
 const AUDIT_PARTITION = 'audit';
+const DASHBOARD_AUTH_PARTITION = 'manager-dashboard-auth';
 const TERMINAL_STATES = new Set([
   'manager-rejected',
+  'admin-cancelled',
   'complete',
   'expired',
   'locked',
@@ -72,6 +74,7 @@ class InMemoryV2Repository {
     this.requests = new Map();
     this.employeeLocks = new Map();
     this.rateLimits = new Map();
+    this.dashboardAuthTransactions = new Map();
     this.auditEvents = [];
   }
 
@@ -120,7 +123,10 @@ class InMemoryV2Repository {
   async findByManagerTokenHash(tokenHash) {
     return [...this.requests.values()]
       .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
-      .find((record) => record.managerTokenHash === tokenHash) || null;
+      .find((record) =>
+        record.managerTokenHash === tokenHash ||
+        record.skipManagerTokenHash === tokenHash
+      ) || null;
   }
 
   async findByManagerAuthState(state) {
@@ -153,6 +159,32 @@ class InMemoryV2Repository {
       ) || null;
   }
 
+  async createDashboardAuthTransaction(record) {
+    this.dashboardAuthTransactions.set(record.state, { ...record, version: 1 });
+  }
+
+  async getDashboardAuthTransaction(state) {
+    const record = this.dashboardAuthTransactions.get(state);
+    if (!record) return null;
+    const { version, ...value } = record;
+    return { ...value, etag: String(version) };
+  }
+
+  async deleteDashboardAuthTransaction(state) {
+    this.dashboardAuthTransactions.delete(state);
+  }
+
+  async findRequestsForApprover(approverObjectId) {
+    const normalized = normalizeIdentifier(approverObjectId);
+    return [...this.requests.values()]
+      .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
+      .filter((record) => !TERMINAL_STATES.has(record.state))
+      .filter((record) =>
+        normalizeIdentifier(record.managerObjectId) === normalized ||
+        normalizeIdentifier(record.skipManagerObjectId) === normalized
+      );
+  }
+
   async incrementRateLimit(key, limit, expiresAt) {
     const current = this.rateLimits.get(key);
     if (!current || Date.now() >= Date.parse(current.expiresAt)) {
@@ -171,6 +203,7 @@ class InMemoryV2Repository {
     this.requests.clear();
     this.employeeLocks.clear();
     this.rateLimits.clear();
+    this.dashboardAuthTransactions.clear();
     this.auditEvents.length = 0;
   }
 }
@@ -284,7 +317,9 @@ class AzureTableV2Repository {
 
   findByManagerTokenHash(tokenHash) {
     return this.findOne(
-      `PartitionKey eq '${REQUEST_PARTITION}' and managerTokenHash eq '${escapeOData(tokenHash)}'`
+      `PartitionKey eq '${REQUEST_PARTITION}' and ` +
+      `(managerTokenHash eq '${escapeOData(tokenHash)}' or ` +
+      `skipManagerTokenHash eq '${escapeOData(tokenHash)}')`
     );
   }
 
@@ -310,6 +345,58 @@ class AzureTableV2Repository {
     return this.findOne(
       `PartitionKey eq '${REQUEST_PARTITION}' and presentationRequestId eq '${escapeOData(requestId)}' and presentationState eq '${escapeOData(state)}'`
     );
+  }
+
+  async createDashboardAuthTransaction(record) {
+    await this.getClient().createEntity(sanitizeEntity({
+      partitionKey: DASHBOARD_AUTH_PARTITION,
+      rowKey: record.state,
+      ...record,
+    }));
+  }
+
+  async getDashboardAuthTransaction(state) {
+    try {
+      return withoutMetadata(
+        await this.getClient().getEntity(DASHBOARD_AUTH_PARTITION, state)
+      );
+    } catch (err) {
+      if (isTableNotFound(err)) return null;
+      throw err;
+    }
+  }
+
+  async deleteDashboardAuthTransaction(state) {
+    await this.getClient().deleteEntity(
+      DASHBOARD_AUTH_PARTITION,
+      state,
+      { etag: '*' }
+    ).catch((err) => {
+      if (!isTableNotFound(err)) throw err;
+    });
+  }
+
+  async findRequestsForApprover(approverObjectId) {
+    const escaped = escapeOData(approverObjectId);
+    const seen = new Set();
+    const results = [];
+    for (const field of ['managerObjectId', 'skipManagerObjectId']) {
+      const entities = this.getClient().listEntities({
+        queryOptions: {
+          filter:
+            `PartitionKey eq '${REQUEST_PARTITION}' and ${field} eq '${escaped}'`,
+        },
+      });
+      // eslint-disable-next-line no-await-in-loop
+      for await (const entity of entities) {
+        const record = withoutMetadata(entity);
+        if (!seen.has(record.requestId) && !TERMINAL_STATES.has(record.state)) {
+          seen.add(record.requestId);
+          results.push(record);
+        }
+      }
+    }
+    return results;
   }
 
   async incrementRateLimit(key, limit, expiresAt) {
@@ -455,6 +542,8 @@ function createOnboardingV2Service(repository) {
         input.employee.userPrincipalName,
       employeeIdHash: input.employeeIdHash,
       managerObjectId: input.manager.id,
+      skipManagerObjectId: undefined,
+      escalationStatus: 'none',
       state: 'requested',
       createdAt: new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
@@ -605,13 +694,23 @@ function createOnboardingV2Service(repository) {
 
   async function redeemManagerToken(input) {
     return updateRequest(input.requestId, ['manager-notified'], (current) => {
+      const normalizedApprover = normalizeIdentifier(input.managerObjectId);
+      const eligibleApprover =
+        timingSafeTextEqual(
+          normalizedApprover,
+          normalizeIdentifier(current.managerObjectId)
+        ) ||
+        timingSafeTextEqual(
+          normalizedApprover,
+          normalizeIdentifier(current.skipManagerObjectId)
+        );
       if (current.managerTokenStatus !== 'active' ||
           Date.now() >= Date.parse(current.managerTokenExpiresAt) ||
-          !timingSafeHashEqual(input.tokenHash, current.managerTokenHash) ||
-          !timingSafeTextEqual(
-            normalizeIdentifier(input.managerObjectId),
-            normalizeIdentifier(current.managerObjectId)
+          (
+            !timingSafeHashEqual(input.tokenHash, current.managerTokenHash) &&
+            !timingSafeHashEqual(input.tokenHash, current.skipManagerTokenHash)
           ) ||
+          !eligibleApprover ||
           !timingSafeTextEqual(
             normalizeIdentifier(input.tenantId),
             normalizeIdentifier(current.tenantId)
@@ -630,6 +729,7 @@ function createOnboardingV2Service(repository) {
         lastManagerAuthFailureCode: undefined,
         lastManagerAuthFailureAt: undefined,
         managerAuthState: undefined,
+        managerAuthTokenHash: undefined,
         managerAuthNonceProtected: undefined,
         managerAuthVerifierProtected: undefined,
         managerAuthExpiresAt: undefined,
@@ -641,22 +741,63 @@ function createOnboardingV2Service(repository) {
   async function beginManagerSignIn(requestId, tokenHash, authorization) {
     return updateRequest(requestId, ['manager-notified'], (current) => {
       if (current.managerTokenStatus !== 'active' ||
-          !timingSafeHashEqual(tokenHash, current.managerTokenHash)) {
+          (
+            !timingSafeHashEqual(tokenHash, current.managerTokenHash) &&
+            !timingSafeHashEqual(tokenHash, current.skipManagerTokenHash)
+          )) {
         throw new V2StateError(
           'The manager approval token is no longer active.',
           'invalid_manager_token',
           410
         );
       }
+
       return {
         ...current,
         managerAuthState: authorization.state,
+        managerAuthTokenHash: tokenHash,
         managerAuthNonceProtected: protectSecret(authorization.nonce),
         managerAuthVerifierProtected: protectSecret(authorization.codeVerifier),
         managerAuthExpiresAt: authorization.expiresAt,
         updatedAt: new Date().toISOString(),
       };
     });
+  }
+
+  async function createDashboardAuthTransaction(authorization, purpose = 'dashboard') {
+    const record = {
+      state: authorization.state,
+      purpose,
+      nonceProtected: protectSecret(authorization.nonce),
+      verifierProtected: protectSecret(authorization.codeVerifier),
+      createdAt: new Date().toISOString(),
+      expiresAt: authorization.expiresAt,
+    };
+    await repository.createDashboardAuthTransaction(record);
+    return record;
+  }
+
+  async function loadDashboardAuthTransaction(state, purpose = 'dashboard') {
+    const record = await repository.getDashboardAuthTransaction(state);
+    if (!record ||
+        record.purpose !== purpose ||
+        Date.now() >= Date.parse(record.expiresAt)) {
+      throw new V2StateError(
+        'The manager sign-in transaction is invalid or expired.',
+        'manager_auth_expired',
+        400
+      );
+    }
+    return {
+      state: record.state,
+      nonce: unprotectSecret(record.nonceProtected),
+      codeVerifier: unprotectSecret(record.verifierProtected),
+      expiresAt: record.expiresAt,
+    };
+  }
+
+  async function deleteDashboardAuthTransaction(state) {
+    await repository.deleteDashboardAuthTransaction(state);
   }
 
   async function loadManagerAuthFlow(state) {
@@ -767,11 +908,19 @@ function createOnboardingV2Service(repository) {
       throw new V2StateError('Decision must be approve or reject.', 'invalid_decision', 400);
     }
     return updateRequest(requestId, ['manager-notified'], (current) => {
-      if (current.managerTokenStatus !== 'redeemed' ||
-          !timingSafeTextEqual(
-            normalizeIdentifier(managerObjectId),
-            normalizeIdentifier(current.managerObjectId)
-          )) {
+      const normalizedApprover = normalizeIdentifier(managerObjectId);
+      const role = timingSafeTextEqual(
+        normalizedApprover,
+        normalizeIdentifier(current.managerObjectId)
+      )
+        ? 'direct-manager'
+        : timingSafeTextEqual(
+          normalizedApprover,
+          normalizeIdentifier(current.skipManagerObjectId)
+        )
+          ? 'skip-manager'
+          : null;
+      if (current.managerTokenStatus !== 'redeemed' || !role) {
         throw new V2StateError(
           'The manager session is not authorized for this request.',
           'manager_not_authorized',
@@ -783,9 +932,143 @@ function createOnboardingV2Service(repository) {
         ...current,
         state: approved ? 'manager-approved' : 'manager-rejected',
         managerDecision: decision,
+        managerDecisionByObjectId: managerObjectId,
+        managerDecisionByRole: role,
         managerDecisionAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+    });
+  }
+
+  async function listRequestsForApprover(approverObjectId) {
+    return repository.findRequestsForApprover(approverObjectId);
+  }
+
+  async function escalateToSkipManager(requestId, skipManager) {
+    const managerToken = randomOpaqueToken();
+    const updated = await updateRequest(
+      requestId,
+      ['manager-notified'],
+      (current) => {
+        if (!skipManager?.id || !skipManager.mail ||
+            normalizeIdentifier(skipManager.id) ===
+              normalizeIdentifier(current.managerObjectId)) {
+          throw new V2StateError(
+            'Skip-level manager is not available for this request.',
+            'skip_manager_unavailable',
+            409
+          );
+        }
+        return {
+          ...current,
+          skipManagerObjectId: skipManager.id,
+          skipManagerDisplayName: skipManager.displayName,
+          skipManagerUserPrincipalName: skipManager.userPrincipalName,
+          escalationStatus: 'requested',
+          escalatedAt: new Date().toISOString(),
+          skipManagerTokenHash: sha256(managerToken),
+          managerTokenStatus: 'active',
+          skipManagerTokenCreatedAt: new Date().toISOString(),
+          managerTokenExpiresAt: current.managerTokenExpiresAt,
+          managerAuthState: undefined,
+          managerAuthTokenHash: undefined,
+          managerAuthNonceProtected: undefined,
+          managerAuthVerifierProtected: undefined,
+          managerAuthExpiresAt: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    );
+    await repository.writeAudit({
+      requestId,
+      correlationId: updated.correlationId,
+      eventType: 'approval_escalated',
+      outcome: 'skip_manager_notified',
+    });
+    return { record: updated, managerToken };
+  }
+
+  async function adminResetRequest(requestId, input) {
+    if (typeof input.etag !== 'string' || !input.etag.trim() || input.etag.trim() === '*') {
+      throw new V2StateError(
+        'A specific request version is required for an admin reset.',
+        'precondition_required',
+        428
+      );
+    }
+    if (!['cancel', 'restart', 'unblock'].includes(input.action)) {
+      throw new V2StateError('Unsupported admin reset action.', 'invalid_admin_action', 400);
+    }
+    if (!input.reason || String(input.reason).trim().length < 8) {
+      throw new V2StateError('A reset reason is required.', 'reason_required', 400);
+    }
+    return updateRequest(requestId, null, (current) => {
+      if (String(current.etag) !== input.etag) {
+        throw new V2StateError(
+          'The request changed. Reload it before resetting.',
+          'precondition_failed',
+          412
+        );
+      }
+      if (TERMINAL_STATES.has(current.state)) {
+        throw new V2StateError(
+          'Terminal requests cannot be reset.',
+          'terminal_request',
+          409
+        );
+      }
+      const now = new Date().toISOString();
+      const base = {
+        ...current,
+        adminResetAction: input.action,
+        adminResetReason: String(input.reason).trim().slice(0, 512),
+        adminResetByObjectId: input.adminObjectId,
+        adminResetAt: now,
+        managerTokenStatus: current.managerTokenStatus ? 'revoked' : undefined,
+        employeeInviteTokenStatus: current.employeeInviteTokenStatus
+          ? 'revoked'
+          : undefined,
+        managerAuthState: undefined,
+        managerAuthTokenHash: undefined,
+        managerAuthNonceProtected: undefined,
+        managerAuthVerifierProtected: undefined,
+        managerAuthExpiresAt: undefined,
+        issuanceState: undefined,
+        issuanceRequestId: undefined,
+        issuanceStatus: undefined,
+        issuancePinProtected: undefined,
+        presentationState: undefined,
+        presentationRequestId: undefined,
+        presentationStatus: undefined,
+        tapProtected: undefined,
+        tapStatus: undefined,
+        tapOperationId: undefined,
+        updatedAt: now,
+      };
+      if (input.action === 'cancel') {
+        return {
+          ...base,
+          state: 'admin-cancelled',
+          cancelledAt: now,
+        };
+      }
+      return {
+        ...base,
+        state: 'requested',
+        notificationStatus: 'admin-reset',
+        issuanceRetryCount: 0,
+        presentationRetryCount: 0,
+        verificationFailureCount: 0,
+      };
+    }).then(async (updated) => {
+      await repository.writeAudit({
+        requestId,
+        correlationId: updated.correlationId,
+        eventType: 'admin_reset',
+        outcome: input.action,
+        adminObjectIdHash: sha256(normalizeIdentifier(input.adminObjectId)),
+      });
+      return updated;
     });
   }
 
@@ -1140,11 +1423,17 @@ function createOnboardingV2Service(repository) {
     activateEmployeeInviteToken,
     beginManagerSignIn,
     loadManagerAuthFlow,
+    createDashboardAuthTransaction,
+    loadDashboardAuthTransaction,
+    deleteDashboardAuthTransaction,
     redeemManagerToken,
     recordManagerRedemptionFailure,
     recordEmployeeInviteFailure,
     confirmEmployeeInvite,
     decide,
+    listRequestsForApprover,
+    escalateToSkipManager,
+    adminResetRequest,
     beginIssuance,
     attachIssuanceRequest,
     failIssuanceRequest,

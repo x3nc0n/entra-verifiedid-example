@@ -67,12 +67,16 @@ class AcsEmailManagerNotificationProvider {
       message.employeeDisplayName,
       'an employee'
     );
+    const isRecovery = message.requestKind === 'recovery';
     return {
       senderAddress: this.senderAddress,
       content: {
-        subject: 'Action required: approve employee onboarding',
+        subject: isRecovery
+          ? 'Action required: approve employee account recovery'
+          : 'Action required: approve employee onboarding',
         plainText:
-          `A self-service onboarding request for ${employeeDisplayName} ` +
+          `A self-service ${isRecovery ? 'account recovery' : 'onboarding'} ` +
+          `request for ${employeeDisplayName} ` +
           `requires your approval.\n\n` +
           `Open this one-time approval link:\n${message.approvalUrl}\n\n` +
           `Sign in with your tenant manager account. Do not forward this link. ` +
@@ -150,6 +154,7 @@ function createManagerNotificationService(provider) {
       recipient: input.managerEmail,
       approvalUrl: input.approvalUrl,
       employeeDisplayName: input.employeeDisplayName,
+      requestKind: input.requestKind,
     });
   }
 

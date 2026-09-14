@@ -37,12 +37,17 @@ experience for both manager-approved onboarding and self-service recovery.
 ### Self-service recovery
 
 1. The employee opens `GET /v2/recovery` and submits UPN plus employee ID.
-2. The app returns a generic response, binds an eligible request to the browser,
-   and asks for the existing Verified ID credential to be presented again.
-3. The callback validates the same bound object ID and employee ID claims.
-4. Before a replacement TAP is issued, Microsoft Graph revokes every existing
+2. The app returns a generic response and, only after server-side eligibility
+   checks, creates a recovery request bound to the browser and notifies the
+   current manager.
+3. The direct manager approves, or the employee requests escalation to exactly
+   the direct manager's manager; both authority checks are revalidated live from
+   Graph at decision time.
+4. After approval, the employee presents the existing Verified ID credential.
+5. The callback validates the same bound object ID and employee ID claims.
+6. Before a replacement TAP is issued, Microsoft Graph revokes every existing
    FIDO2 method for that employee.
-5. The employee signs in with the one-time TAP and registers a replacement
+7. The employee signs in with the one-time TAP and registers a replacement
    tenant passkey.
 
 The legacy v1 invitation-based and pre-v2 flows remain removed from the
@@ -66,11 +71,15 @@ application.
 | `POST /api/v2/verified-id/presentation/callback` | Validate the credential and idempotently create TAP. |
 | `GET /v2/manager/approval` | Activate the fragment approval token and show the manager decision UI. |
 | `POST /api/v2/manager-approvals/activate` | Hash and bind the one-time manager token to a short pre-auth session. |
+| `POST /api/v2/manager-approvals/:requestKind/:requestId/escalate` | Let the browser-bound employee request skip-level approval from exactly the direct manager's manager. |
 | `POST /api/v2/manager/invitations` | Validate a selected direct report and create a manager-initiated onboarding request. |
 | `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
 | `GET /auth/manager/dashboard/signin` | Start the manager-dashboard OIDC/PKCE flow. |
+| `GET /auth/admin/signin` | Start the admin OIDC/PKCE flow before app-role authorization. |
 | `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
 | `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
+| `GET /v2/admin` | Portal administrator operation entry point. |
+| `POST /api/v2/admin/requests/:requestKind/:requestId/reset` | Audited scoped cancel/restart/unblock operation guarded by admin group membership and ETag. |
 | `GET /v2/recovery` | Recovery intake and session-bound status UI. |
 | `POST /api/v2/recovery/requests` | Validate intake evidence and create a recovery request with a generic response. |
 | `GET /api/v2/recovery/status` | Return coarse progress for the bound recovery session. |
@@ -94,9 +103,21 @@ application.
   and concurrency-safe in Azure Table Storage.
 - Verified ID presentation is constrained to the exact employee object ID and
   employee ID recorded at intake.
-- Manager sign-in uses PKCE, state, nonce, and tenant/object-ID validation.
-- Recovery re-presentation of the existing Verified ID is required before
-  passkeys are revoked and a replacement TAP is issued.
+- Manager/admin sign-in uses PKCE, state, nonce, tenant/object-ID validation,
+  and the `roles` claim from the manager OIDC app. Portal admin access requires
+  the configured admin app role. Manager dashboard and approval access require
+  the configured user app role plus live Graph relationship scope for manager or
+  skip-manager decisions.
+- Unauthenticated onboarding and recovery bootstrap cannot rely on an OIDC
+  token, so the server separately checks direct membership in the configured
+  users group before creating request context. Do not substitute nested or
+  transitive groups for this bootstrap check.
+- Manager dashboard OIDC transaction state is durable, so `form_post`
+  callbacks do not rely on SameSite=Strict cookies carrying session-only
+  pre-auth state across a cross-site POST.
+- Recovery requires manager or skip-level approval plus re-presentation of the
+  existing Verified ID before passkeys are revoked and a replacement TAP is
+  issued.
 - Recovery revokes all existing FIDO2 methods before replacement passkey setup.
 - Cache-control, referrer, frame, content-type, and CSP headers are applied
   across the app.
@@ -119,6 +140,18 @@ Demo mode still allows local rendering and tests without live tenant resources.
 A full end-to-end onboarding run requires the live v2 manager OIDC, Verified ID,
 Table Storage, and Graph configuration described below.
 
+To reproduce the browser-specific SameSite=Strict dashboard callback regression
+without real Entra credentials or cloud services, run:
+
+```powershell
+npm run test:browser-dashboard-auth
+```
+
+The harness launches the local Express app plus a fake IdP on a different local
+origin, posts an OIDC `form_post` callback through a real Chromium-family browser
+(Edge, Chrome, Chromium, or `BROWSER_BIN`), and verifies the same-origin callback
+completion loads the authenticated dashboard.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
@@ -133,6 +166,10 @@ Table Storage, and Graph configuration described below.
 | `AZURE_CLIENT_SECRET` | No | None | Deprecated runtime secret; preserved only for bootstrap compatibility. |
 | `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<tenant>` | Entra authority base URL. |
 | `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked before TAP creation. |
+| `V2_ADMIN_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the admin app role in the manager OIDC Enterprise App. |
+| `V2_USERS_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the user app role and used for tokenless bootstrap eligibility. |
+| `V2_ADMIN_ROLE_VALUE` | No | `VerifiedId.Onboarding.Admin` | Stable manager OIDC app role value required for portal admin reset operations. |
+| `V2_USER_ROLE_VALUE` | No | `VerifiedId.Onboarding.User` | Stable manager OIDC app role value required for manager dashboard and approval sign-in. |
 | `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
 | `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
 | `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
@@ -204,20 +241,90 @@ Do not remove them from `.github/workflows/` in application-only changes unless
 those workflows are being updated in the same reviewed infra PR.
 
 ## Required live integration work
-
-1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
+
+### Supported operator entry points
+
+Use these public actions in order; the numbered scripts are internal phase
+implementations retained for compatibility:
+
+1. `scripts\bootstrap-manager-app-roles.ps1` — discovers the verified tenant,
+   account, security groups, application, and Enterprise App, then previews or
+   explicitly applies the two managed roles and group mappings. It never
+   deploys Azure infrastructure.
+2. `scripts\bootstrap.ps1` — provisions the Azure resources and runtime
+   configuration. It is a separate infrastructure operation and is not invoked
+   by the manager-role entry point.
+3. `npm test` — validates the repository locally.
+
+1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
    `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
    high-entropy secrets.
-2. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
-   table-scoped access to the session and v2 request tables.
-3. Grant the runtime identity the Graph app roles used by this flow:
-   `User.Read.All`, `GroupMember.Read.All`,
-   `UserAuthMethod-TAP.ReadWrite.All`, and
-   `UserAuthMethod-Passkey.Read.All`.
-4. Provision and register the dedicated manager OIDC app callback at
-   `/auth/manager/callback`.
-5. Provision the dedicated Verified ID v2 contract and manifest.
-6. Configure ACS Email when live manager notifications should be sent.
+2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to your own tenant's
+   administrator and users security-group object IDs. With **Deploy to Azure**,
+   supply these as `adminGroupId` and `usersGroupId` in the deployment form.
+   The template does not create these groups or infer them from display names.
+   For GitHub Actions deployments, set the corresponding variables separately
+   in each deployment environment; repository-specific values are not template defaults.
+   Resolve and verify the IDs as part of the public manager-role bootstrap.
+   **Prerequisite:** verify that delegated `User.Read` and `Group.Read.All`
+   already have consent for the Azure CLI client in your tenant. Consent for
+   Microsoft Graph PowerShell does not satisfy this prerequisite.
+   `-ExistingConsentConfirmed` attests to that prerequisite; it does not grant
+   consent or verify the grant automatically. **Cancel any new consent prompt.**
+   If consent is missing, stop and obtain separate authorization before setup.
+
+   The manager-role bootstrap uses the Azure CLI system browser and only the pre-consented
+   delegated Graph read access (`User.Read` and `Group.Read.All`), validates the
+   Azure CLI tenant/account and the actual Graph `/me` identity before group
+   reads, follows Graph pagination, and rejects missing, ambiguous, or
+   non-security groups. It does not change the app registration, assignments,
+   credentials, or Azure resources.
+   Interactive authentication can offer persistent consent changes; the script
+   cannot prevent an operator accepting them, so cancel rather than approve.
+   Use `-ReuseExistingLogin` to verify the current Azure CLI login without
+   opening another browser.
+   The system browser is the default and there is no automatic device-code
+   fallback. Other deployers may explicitly use `-UseDeviceCode`, but tenant
+   Conditional Access or location policy may disallow device-code
+   authentication; a failed device-code login stops rather than switching flows.
+3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
+   table-scoped access to the session and v2 request tables.
+4. Bootstrap the stable app roles and group mappings with the public manager-role
+   entry point. The first command is a no-write preview; the read-only group
+   lookup does not prove write permission. Separately verify pre-existing Azure
+   CLI consent for the directory write permissions required by an apply:
+
+   ```powershell
+   .\scripts\bootstrap-manager-app-roles.ps1 `
+     -TenantId "<tenant-id>" `
+     -ExpectedAccount "<authorized-operator-upn>" `
+     -AdminGroup "<exact-admin-group-name-or-object-id>" `
+     -UsersGroup "<exact-users-group-name-or-object-id>" `
+     -ManagerAppClientId "<manager-app-client-id>" `
+     -ReuseExistingLogin `
+     -ConfirmAssignments `
+     -WhatIf
+   ```
+
+   The preview performs GET-only discovery and shows the complete managed role
+   definitions and group mappings, including a missing service principal
+   prerequisite; it never creates the Enterprise App. After reviewing the
+   target tenant, account, application, groups, stable role IDs, and exact
+   payload plan, remove `-WhatIf`, add `-ExistingWriteConsentConfirmed`, and
+   run the same command to apply. Keep `-ConfirmAssignments` on the apply. The
+   script preserves unrelated app roles
+   and existing Enterprise App assignments, and stops on the first failed write.
+   Group-based assignment requires an Entra edition that supports assigning
+   groups to enterprise applications; nested groups do not cascade into the
+   emitted `roles` claim. Verify the required tenant licensing before applying.
+5. Grant the runtime identity the Graph app roles used by this flow:
+   `User.Read.All`, `GroupMember.Read.All`,
+   `UserAuthMethod-TAP.ReadWrite.All`, and
+   `UserAuthMethod-Passkey.Read.All`.
+6. Provision and register the dedicated manager OIDC app callback at
+   `/auth/manager/callback`.
+7. Provision the dedicated Verified ID v2 contract and manifest.
+8. Configure ACS Email when live manager notifications should be sent.
 
 See [`docs/architecture.md`](docs/architecture.md),
 [`docs/job-aids.md`](docs/job-aids.md), and [SECURITY.md](SECURITY.md).

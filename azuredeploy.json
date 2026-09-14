@@ -94,6 +94,36 @@
         "description": "Immutable object ID of the dedicated Entra pilot group. No tenant-wide default is permitted."
       }
     },
+    "adminGroupId": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "metadata": {
+        "description": "Your tenant's administrator security-group object ID. Assign this group to the manager OIDC Admin app role separately."
+      }
+    },
+    "usersGroupId": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "metadata": {
+        "description": "Your tenant's users security-group object ID for bootstrap eligibility. Assign this group to the manager OIDC User app role separately."
+      }
+    },
+    "adminRoleValue": {
+      "type": "string",
+      "defaultValue": "VerifiedId.Onboarding.Admin",
+      "metadata": {
+        "description": "Manager OIDC app role value assigned to portal administrators."
+      }
+    },
+    "userRoleValue": {
+      "type": "string",
+      "defaultValue": "VerifiedId.Onboarding.User",
+      "metadata": {
+        "description": "Manager OIDC app role value assigned to authenticated users, managers, and skip-level managers."
+      }
+    },
     "demoMode": {
       "type": "bool",
       "defaultValue": false,
@@ -356,6 +386,22 @@
                 {
                   "name": "PILOT_GROUP_ID",
                   "value": "[parameters('pilotGroupId')]"
+                },
+                {
+                  "name": "V2_ADMIN_GROUP_ID",
+                  "value": "[parameters('adminGroupId')]"
+                },
+                {
+                  "name": "V2_USERS_GROUP_ID",
+                  "value": "[parameters('usersGroupId')]"
+                },
+                {
+                  "name": "V2_ADMIN_ROLE_VALUE",
+                  "value": "[parameters('adminRoleValue')]"
+                },
+                {
+                  "name": "V2_USER_ROLE_VALUE",
+                  "value": "[parameters('userRoleValue')]"
                 },
                 {
                   "name": "KEY_VAULT_URL",

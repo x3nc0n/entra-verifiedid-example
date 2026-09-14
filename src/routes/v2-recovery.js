@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
 const graphService = require('../services/graph-service');
+const notificationService = require('../services/manager-notification-service');
 const { V2StateError } = require('../services/onboarding-v2-service');
 const recoveryService = require('../services/recovery-v2-service');
 const verifiedIdService = require('../services/verified-id-service');
@@ -56,7 +57,9 @@ function toExpiryIso(value) {
 
 function coarseStatus(request) {
   const nextActions = {
-    requested: 'present-credential',
+    requested: 'await-manager-notification',
+    'manager-notified': 'await-manager-decision',
+    'manager-approved': 'present-credential',
     'credential-presented': 'verifying',
     verified: 'preparing-access-pass',
     'passkeys-revoked': request.tapStatus === 'error'
@@ -159,10 +162,13 @@ router.post(
       const employee = await graphService.getEmployeeWithManager(userPrincipalName);
       const submittedEmployeeHash = hashNormalized(employeeId);
       const authoritativeEmployeeHash = hashNormalized(employee?.employeeId);
+      const manager = employee?.manager;
       const eligible = employee &&
         employee.accountEnabled === true &&
         employee.employeeId &&
         timingSafeHashEqual(submittedEmployeeHash, authoritativeEmployeeHash) &&
+        manager?.id &&
+        manager.mail &&
         (config.demoMode ||
           await graphService.isUserInGroup(employee.id, config.graph.pilotGroupId));
 
@@ -180,12 +186,36 @@ router.post(
         await auditRejectedRecovery(req, userPrincipalName, 'employee_rate_limited');
         return genericResponse();
       }
+      await graphService.requireNativeUser(employee.id);
 
       const created = await recoveryService.createRecoveryRequest({
         tenantId: config.azure.tenantId,
         employee,
+        manager,
         employeeIdHash: authoritativeEmployeeHash,
       });
+      const approvalUrl =
+        `${config.appBaseUrl}/v2/manager/approval#token=` +
+        encodeURIComponent(created.managerToken);
+      const notification = await notificationService.sendApprovalRequest({
+        requestId: created.record.requestId,
+        correlationId: created.record.correlationId,
+        managerEmail: manager.mail,
+        approvalUrl,
+        employeeDisplayName: created.record.employeeDisplayName,
+        requestKind: 'recovery',
+      });
+      if (notification.accepted) {
+        await recoveryService.markManagerNotified(
+          created.record.requestId,
+          notification.provider
+        );
+      } else {
+        await recoveryService.markNotificationFailed(
+          created.record.requestId,
+          notification.reasonCode
+        );
+      }
       await regenerateSession(req);
       req.session.v2Recovery = {
         requestId: created.record.requestId,
@@ -225,9 +255,9 @@ router.post(
     let callbackState;
     try {
       request = await loadBoundRecoveryRequest(req);
-      if (!['requested', 'credential-presented'].includes(request.state)) {
+      if (!['manager-approved', 'credential-presented'].includes(request.state)) {
         throw new V2StateError(
-          'Recovery presentation is not available in this state.',
+          'Manager approval is required before recovery credential presentation.',
           'invalid_state'
         );
       }
