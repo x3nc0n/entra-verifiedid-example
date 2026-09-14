@@ -87,6 +87,45 @@ async function getUserById(userId) {
   }
 }
 
+async function getManagerByUserId(userId, dependencies = {}) {
+  if (config.demoMode) {
+    if (String(userId) === 'demo-user-id-00000000-0000-0000-0000-000000000001') {
+      return {
+        id: 'demo-manager-id-00000000-0000-0000-0000-000000000002',
+        displayName: 'Demo Manager',
+        mail: 'demo.manager@tenant.example',
+        userPrincipalName: 'demo.manager@tenant.example',
+      };
+    }
+    if (String(userId) === 'demo-manager-id-00000000-0000-0000-0000-000000000002') {
+      return {
+        id: 'demo-skip-manager-id-0000-0000-0000-000000000004',
+        displayName: 'Demo Skip Manager',
+        mail: 'demo.skip.manager@tenant.example',
+        userPrincipalName: 'demo.skip.manager@tenant.example',
+      };
+    }
+    return null;
+  }
+
+  const token = await (dependencies.getAccessToken || getAccessToken)();
+  const get = dependencies.get || axios.get.bind(axios);
+  const encodedUser = encodeURIComponent(userId);
+  try {
+    const response = await get(
+      `${config.graph.baseUrl}/v1.0/users/${encodedUser}/manager/microsoft.graph.user`,
+      {
+        params: { $select: 'id,displayName,mail,userPrincipalName' },
+        headers: authorizationHeaders(token),
+      }
+    );
+    return response.data;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
 async function getEmployeeWithManager(userPrincipalName) {
   if (config.demoMode) {
     return {
@@ -194,6 +233,35 @@ async function isUserInGroup(userId, groupId) {
     .some((value) => String(value).toLowerCase() === String(groupId).toLowerCase());
 }
 
+async function requireUserInGroup(userId, groupId, errorCode, dependencies = {}) {
+  const checkMembership = dependencies.isUserInGroup || isUserInGroup;
+  if (!groupId || !await checkMembership(userId, groupId)) {
+    throw new PilotEligibilityError(
+      'The Entra account is not a current member of the required configured group.',
+      errorCode
+    );
+  }
+  return true;
+}
+
+async function requireNativeUser(userId, dependencies = {}) {
+  return requireUserInGroup(
+    userId,
+    dependencies.usersGroupId || config.selfServiceV2.authorization.usersGroupId,
+    'native_users_group_required',
+    dependencies
+  );
+}
+
+async function requirePortalAdmin(userId, dependencies = {}) {
+  return requireUserInGroup(
+    userId,
+    dependencies.adminGroupId || config.selfServiceV2.authorization.adminGroupId,
+    'admin_group_required',
+    dependencies
+  );
+}
+
 async function getEligiblePilotUser(userId, dependencies = {}) {
   const loadUser = dependencies.getUserById || getUserById;
   const checkMembership = dependencies.isUserInGroup || isUserInGroup;
@@ -212,6 +280,7 @@ async function getEligiblePilotUser(userId, dependencies = {}) {
       'account_disabled'
     );
   }
+  await requireNativeUser(user.id, dependencies);
   if (!config.demoMode && (!groupId || !await checkMembership(user.id, groupId))) {
     throw new PilotEligibilityError(
       'The invitation-bound Entra account is not a current member of the configured pilot group.',
@@ -396,9 +465,13 @@ module.exports = {
   getAccessToken,
   getUserByPrincipalName,
   getUserById,
+  getManagerByUserId,
   getEmployeeWithManager,
   listDirectReports,
   isUserInGroup,
+  requireUserInGroup,
+  requireNativeUser,
+  requirePortalAdmin,
   getEligiblePilotUser,
   createTemporaryAccessPass,
   createTemporaryAccessPassForPilotUser,

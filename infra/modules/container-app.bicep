@@ -27,6 +27,12 @@ param fido2Origin string
 @description('Immutable object ID of the dedicated Entra pilot group.')
 param pilotGroupId string
 
+@description('Immutable object ID of the Entra security group authorized for portal admin reset operations.')
+param adminGroupId string = ''
+
+@description('Immutable object ID of the Entra security group required for user, manager, and skip-level participation.')
+param usersGroupId string = ''
+
 @description('Enable demo mode.')
 param demoMode bool = false
 
@@ -138,6 +144,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'FIDO2_RP_ID', value: fido2RpId }
             { name: 'FIDO2_ORIGIN', value: fido2Origin }
             { name: 'PILOT_GROUP_ID', value: pilotGroupId }
+            { name: 'V2_ADMIN_GROUP_ID', value: adminGroupId }
+            { name: 'V2_USERS_GROUP_ID', value: usersGroupId }
             { name: 'KEY_VAULT_URL', value: keyVaultUrl }
             { name: 'DEMO_MODE', value: string(demoMode) }
             { name: 'ONBOARDING_STATE_BACKEND', value: 'azure-table' }

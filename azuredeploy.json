@@ -94,6 +94,20 @@
         "description": "Immutable object ID of the dedicated Entra pilot group. No tenant-wide default is permitted."
       }
     },
+    "adminGroupId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Immutable object ID of the Entra security group authorized for portal admin reset operations."
+      }
+    },
+    "usersGroupId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Immutable object ID of the Entra security group required for user, manager, and skip-level participation."
+      }
+    },
     "demoMode": {
       "type": "bool",
       "defaultValue": false,
@@ -356,6 +370,14 @@
                 {
                   "name": "PILOT_GROUP_ID",
                   "value": "[parameters('pilotGroupId')]"
+                },
+                {
+                  "name": "V2_ADMIN_GROUP_ID",
+                  "value": "[parameters('adminGroupId')]"
+                },
+                {
+                  "name": "V2_USERS_GROUP_ID",
+                  "value": "[parameters('usersGroupId')]"
                 },
                 {
                   "name": "KEY_VAULT_URL",

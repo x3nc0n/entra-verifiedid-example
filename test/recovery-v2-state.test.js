@@ -14,6 +14,10 @@ const employee = {
   displayName: 'Employee',
   employeeId: 'EMP-1001',
 };
+const manager = {
+  id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  mail: 'manager@tenant.example',
+};
 
 let original;
 let repository;
@@ -42,8 +46,17 @@ test('recovery requests revoke existing passkeys before issuing a replacement TA
   const created = await service.createRecoveryRequest({
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     employee,
+    manager,
     employeeIdHash: 'employee-id-hash',
   });
+  await service.markManagerNotified(created.record.requestId, 'test');
+  const activation = await service.activateManagerToken(created.managerToken);
+  await service.redeemManagerToken({
+    ...activation,
+    managerObjectId: manager.id,
+    tenantId: created.record.tenantId,
+  });
+  await service.decide(created.record.requestId, manager.id, 'approve');
   await service.beginPresentation(created.record.requestId, {
     state: 'presentation-state',
   });
@@ -104,8 +117,17 @@ test('recovery verification failures lock the request after the configured limit
   const created = await service.createRecoveryRequest({
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     employee,
+    manager,
     employeeIdHash: 'employee-id-hash',
   });
+  await service.markManagerNotified(created.record.requestId, 'test');
+  const activation = await service.activateManagerToken(created.managerToken);
+  await service.redeemManagerToken({
+    ...activation,
+    managerObjectId: manager.id,
+    tenantId: created.record.tenantId,
+  });
+  await service.decide(created.record.requestId, manager.id, 'approve');
   await service.beginPresentation(created.record.requestId, {
     state: 'presentation-state',
   });

@@ -6,6 +6,7 @@ const http = require('node:http');
 const express = require('express');
 const session = require('express-session');
 
+const config = require('../src/config');
 const graphService = require('../src/services/graph-service');
 const managerAuthService = require('../src/services/manager-auth-service');
 const onboardingService = require('../src/services/onboarding-v2-service');
@@ -70,6 +71,8 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     redeemManagerToken: onboardingService.redeemManagerToken,
     recordManagerRedemptionFailure: onboardingService.recordManagerRedemptionFailure,
     exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+    getEmployeeWithManager: graphService.getEmployeeWithManager,
+    requireNativeUser: graphService.requireNativeUser,
   };
 
   let redeemInput = null;
@@ -89,10 +92,15 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     },
   });
   managerAuthService.exchangeAuthorizationCode = async () => ({
-    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    objectId: '99999999-9999-9999-9999-999999999999',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
   });
+  graphService.getEmployeeWithManager = async () => ({
+    id: '12345678-1234-1234-1234-1234567890ab',
+    manager: { id: '99999999-9999-9999-9999-999999999999' },
+  });
+  graphService.requireNativeUser = async () => true;
   onboardingService.redeemManagerToken = async (input) => {
     redeemInput = input;
   };
@@ -125,7 +133,7 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     assert.equal(redeemInput.requestId, '11111111-2222-3333-4444-555555555555');
     assert.equal(
       redeemInput.managerObjectId,
-      'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
+      '99999999-9999-9999-9999-999999999999'
     );
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -137,6 +145,10 @@ test('manager callback redeems when live Graph manager matches the signed-in oid
     Object.assign(managerAuthService, {
       exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
     });
+    Object.assign(graphService, {
+      getEmployeeWithManager: originals.getEmployeeWithManager,
+      requireNativeUser: originals.requireNativeUser,
+    });
   }
 });
 
@@ -146,6 +158,8 @@ test('manager callback treats a session-persistence failure as distinct from an 
     redeemManagerToken: onboardingService.redeemManagerToken,
     recordManagerRedemptionFailure: onboardingService.recordManagerRedemptionFailure,
     exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
+    getEmployeeWithManager: graphService.getEmployeeWithManager,
+    requireNativeUser: graphService.requireNativeUser,
   };
 
   let redeemInput = null;
@@ -165,10 +179,15 @@ test('manager callback treats a session-persistence failure as distinct from an 
     },
   });
   managerAuthService.exchangeAuthorizationCode = async () => ({
-    objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
+    objectId: '99999999-9999-9999-9999-999999999999',
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
     displayName: 'Manager',
   });
+  graphService.getEmployeeWithManager = async () => ({
+    id: '12345678-1234-1234-1234-1234567890ab',
+    manager: { id: '99999999-9999-9999-9999-999999999999' },
+  });
+  graphService.requireNativeUser = async () => true;
   onboardingService.redeemManagerToken = async (input) => {
     redeemInput = input;
   };
@@ -217,6 +236,10 @@ test('manager callback treats a session-persistence failure as distinct from an 
     });
     Object.assign(managerAuthService, {
       exchangeAuthorizationCode: originals.exchangeAuthorizationCode,
+    });
+    Object.assign(graphService, {
+      getEmployeeWithManager: originals.getEmployeeWithManager,
+      requireNativeUser: originals.requireNativeUser,
     });
   }
 });
@@ -307,7 +330,10 @@ test('manager dashboard callback creates an authenticated dashboard session', as
   const originals = {
     exchangeAuthorizationCode: managerAuthService.exchangeAuthorizationCode,
     getUserById: graphService.getUserById,
+    requireNativeUser: graphService.requireNativeUser,
+    protectionKey: config.selfServiceV2.protectionKey,
   };
+  config.selfServiceV2.protectionKey = Buffer.alloc(32, 9).toString('base64');
 
   managerAuthService.exchangeAuthorizationCode = async () => ({
     objectId: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
@@ -319,15 +345,15 @@ test('manager dashboard callback creates an authenticated dashboard session', as
     displayName: 'Manager',
     userPrincipalName: 'manager@tenant.example',
   });
+  graphService.requireNativeUser = async () => true;
+  await onboardingService.createDashboardAuthTransaction({
+    state: 'dashboard-state',
+    nonce: 'expected-nonce',
+    codeVerifier: 'expected-verifier',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  }, 'dashboard');
 
-  const app = createApp((sessionState) => {
-    sessionState.v2ManagerDashboardAuth = {
-      state: 'dashboard-state',
-      nonce: 'expected-nonce',
-      codeVerifier: 'expected-verifier',
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    };
-  });
+  const app = createApp();
   const server = app.listen(0);
 
   try {
@@ -336,8 +362,10 @@ test('manager dashboard callback creates an authenticated dashboard session', as
       code: 'authorization-code',
     });
 
-    assert.equal(response.statusCode, 302);
-    assert.equal(response.headers.location, '/v2/manager/dashboard');
+    assert.equal(response.statusCode, 200);
+    const parsed = JSON.parse(response.body);
+    assert.equal(parsed.view, 'v2-manager-callback-complete');
+    assert.equal(parsed.model.continueHref, '/v2/manager/dashboard');
     assert.match(response.headers['set-cookie'].join('\n'), /connect\.sid=/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -346,6 +374,8 @@ test('manager dashboard callback creates an authenticated dashboard session', as
     });
     Object.assign(graphService, {
       getUserById: originals.getUserById,
+      requireNativeUser: originals.requireNativeUser,
     });
+    config.selfServiceV2.protectionKey = originals.protectionKey;
   }
 });

@@ -151,6 +151,7 @@ router.post(
         await auditRejectedIntake(req, userPrincipalName, 'employee_rate_limited');
         return genericResponse();
       }
+      await graphService.requireNativeUser(employee.id);
 
       const created = await onboardingService.createRequest({
         tenantId: config.azure.tenantId,

@@ -120,6 +120,8 @@ jobs:
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
               "DEMO_MODE=false" \
               "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "V2_ADMIN_GROUP_ID=${{ vars.V2_ADMIN_GROUP_ID }}" \
+              "V2_USERS_GROUP_ID=${{ vars.V2_USERS_GROUP_ID }}" \
               "ONBOARDING_STATE_BACKEND=azure-table" \
               "AZURE_STORAGE_TABLE_ENDPOINT=${{ vars.AZURE_STORAGE_TABLE_ENDPOINT }}" \
               "AZURE_TENANT_ID=${{ vars.AZURE_TENANT_ID }}" \
@@ -261,6 +263,8 @@ jobs:
               "APP_BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_FQDN }}" \
               "DEMO_MODE=false" \
               "PILOT_GROUP_ID=${{ vars.PILOT_GROUP_ID }}" \
+              "V2_ADMIN_GROUP_ID=${{ vars.V2_ADMIN_GROUP_ID }}" \
+              "V2_USERS_GROUP_ID=${{ vars.V2_USERS_GROUP_ID }}" \
               "ONBOARDING_STATE_BACKEND=azure-table" \
               "AZURE_STORAGE_TABLE_ENDPOINT=${{ vars.AZURE_STORAGE_TABLE_ENDPOINT }}" \
               "AZURE_TENANT_ID=${{ vars.AZURE_TENANT_ID }}" \

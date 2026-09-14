@@ -83,6 +83,7 @@ test('manager dashboard renders sign-in when no dashboard session exists', async
 test('manager invitation rejects employees outside the manager direct reports', async () => {
   const originals = {
     listDirectReports: graphService.listDirectReports,
+    requireNativeUser: graphService.requireNativeUser,
     enforceRateLimit: onboardingService.enforceRateLimit,
   };
   graphService.listDirectReports = async () => [{
@@ -92,6 +93,7 @@ test('manager invitation rejects employees outside the manager direct reports', 
     employeeId: 'EMP-1001',
     accountEnabled: true,
   }];
+  graphService.requireNativeUser = async () => true;
   onboardingService.enforceRateLimit = async () => ({ allowed: true, count: 1 });
 
   const app = createApp((sessionState) => {
@@ -116,6 +118,7 @@ test('manager invitation rejects employees outside the manager direct reports', 
     await new Promise((resolve) => server.close(resolve));
     Object.assign(graphService, {
       listDirectReports: originals.listDirectReports,
+      requireNativeUser: originals.requireNativeUser,
     });
     Object.assign(onboardingService, {
       enforceRateLimit: originals.enforceRateLimit,
@@ -127,6 +130,7 @@ test('manager invitation returns an employee invite link for a direct report', a
   const originals = {
     listDirectReports: graphService.listDirectReports,
     getEligiblePilotUser: graphService.getEligiblePilotUser,
+    requireNativeUser: graphService.requireNativeUser,
     enforceRateLimit: onboardingService.enforceRateLimit,
     createManagerInitiatedRequest: onboardingService.createManagerInitiatedRequest,
   };
@@ -137,6 +141,7 @@ test('manager invitation returns an employee invite link for a direct report', a
     employeeId: 'EMP-1001',
     accountEnabled: true,
   }];
+  graphService.requireNativeUser = async () => true;
   graphService.getEligiblePilotUser = async () => ({ id: 'direct-report-1' });
   onboardingService.enforceRateLimit = async () => ({ allowed: true, count: 1 });
   onboardingService.createManagerInitiatedRequest = async () => ({
@@ -169,6 +174,7 @@ test('manager invitation returns an employee invite link for a direct report', a
     Object.assign(graphService, {
       listDirectReports: originals.listDirectReports,
       getEligiblePilotUser: originals.getEligiblePilotUser,
+      requireNativeUser: originals.requireNativeUser,
     });
     Object.assign(onboardingService, {
       enforceRateLimit: originals.enforceRateLimit,

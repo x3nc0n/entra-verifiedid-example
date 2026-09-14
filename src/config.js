@@ -117,6 +117,10 @@ const config = {
       redirectUri: process.env.V2_MANAGER_OIDC_REDIRECT_URI ||
         `${appBaseUrl}/auth/manager/callback`,
     },
+    authorization: {
+      adminGroupId: process.env.V2_ADMIN_GROUP_ID || '',
+      usersGroupId: process.env.V2_USERS_GROUP_ID || '',
+    },
     verifiedId: {
       authority: process.env.V2_VERIFIED_ID_AUTHORITY || '',
       manifestUrl: process.env.V2_VERIFIED_ID_MANIFEST_URL || '',
@@ -254,6 +258,12 @@ function validateRuntimeConfiguration() {
   }
   if (!config.demoMode && !managerOidc.clientSecret) {
     errors.push('V2_MANAGER_OIDC_CLIENT_SECRET is required.');
+  }
+  if (!config.demoMode && !isGuid(v2.authorization.adminGroupId)) {
+    errors.push('V2_ADMIN_GROUP_ID must be the immutable portal admin group object ID.');
+  }
+  if (!config.demoMode && !isGuid(v2.authorization.usersGroupId)) {
+    errors.push('V2_USERS_GROUP_ID must be the immutable NativeUsers group object ID.');
   }
   if (!isHttpsUrl(managerOidc.redirectUri) && !config.demoMode) {
     errors.push('V2_MANAGER_OIDC_REDIRECT_URI must use HTTPS.');

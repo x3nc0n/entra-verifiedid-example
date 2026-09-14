@@ -37,12 +37,17 @@ experience for both manager-approved onboarding and self-service recovery.
 ### Self-service recovery
 
 1. The employee opens `GET /v2/recovery` and submits UPN plus employee ID.
-2. The app returns a generic response, binds an eligible request to the browser,
-   and asks for the existing Verified ID credential to be presented again.
-3. The callback validates the same bound object ID and employee ID claims.
-4. Before a replacement TAP is issued, Microsoft Graph revokes every existing
+2. The app returns a generic response and, only after server-side eligibility
+   checks, creates a recovery request bound to the browser and notifies the
+   current manager.
+3. The direct manager approves, or the employee requests escalation to exactly
+   the direct manager's manager; both authority checks are revalidated live from
+   Graph at decision time.
+4. After approval, the employee presents the existing Verified ID credential.
+5. The callback validates the same bound object ID and employee ID claims.
+6. Before a replacement TAP is issued, Microsoft Graph revokes every existing
    FIDO2 method for that employee.
-5. The employee signs in with the one-time TAP and registers a replacement
+7. The employee signs in with the one-time TAP and registers a replacement
    tenant passkey.
 
 The legacy v1 invitation-based and pre-v2 flows remain removed from the
@@ -66,11 +71,15 @@ application.
 | `POST /api/v2/verified-id/presentation/callback` | Validate the credential and idempotently create TAP. |
 | `GET /v2/manager/approval` | Activate the fragment approval token and show the manager decision UI. |
 | `POST /api/v2/manager-approvals/activate` | Hash and bind the one-time manager token to a short pre-auth session. |
+| `POST /api/v2/manager-approvals/:requestKind/:requestId/escalate` | Let the browser-bound employee request skip-level approval from exactly the direct manager's manager. |
 | `POST /api/v2/manager/invitations` | Validate a selected direct report and create a manager-initiated onboarding request. |
 | `GET /auth/manager/signin` | Start the single-tenant manager OIDC/PKCE flow. |
 | `GET /auth/manager/dashboard/signin` | Start the manager-dashboard OIDC/PKCE flow. |
+| `GET /auth/admin/signin` | Start the admin OIDC/PKCE flow before live group membership authorization. |
 | `POST /auth/manager/callback` | Validate the manager identity and atomically redeem the token. |
 | `POST /api/v2/manager-approvals/:requestId/decision` | Recheck the manager relationship and record the decision. |
+| `GET /v2/admin` | Portal administrator operation entry point. |
+| `POST /api/v2/admin/requests/:requestKind/:requestId/reset` | Audited scoped cancel/restart/unblock operation guarded by admin group membership and ETag. |
 | `GET /v2/recovery` | Recovery intake and session-bound status UI. |
 | `POST /api/v2/recovery/requests` | Validate intake evidence and create a recovery request with a generic response. |
 | `GET /api/v2/recovery/status` | Return coarse progress for the bound recovery session. |
@@ -95,8 +104,15 @@ application.
 - Verified ID presentation is constrained to the exact employee object ID and
   employee ID recorded at intake.
 - Manager sign-in uses PKCE, state, nonce, and tenant/object-ID validation.
-- Recovery re-presentation of the existing Verified ID is required before
-  passkeys are revoked and a replacement TAP is issued.
+- Admin authority comes from live membership in the configured immutable admin
+  group object ID. User, manager, and skip-manager eligibility comes from live
+  membership in the configured immutable users group object ID.
+- Manager dashboard OIDC transaction state is durable, so `form_post`
+  callbacks do not rely on SameSite=Strict cookies carrying session-only
+  pre-auth state across a cross-site POST.
+- Recovery requires manager or skip-level approval plus re-presentation of the
+  existing Verified ID before passkeys are revoked and a replacement TAP is
+  issued.
 - Recovery revokes all existing FIDO2 methods before replacement passkey setup.
 - Cache-control, referrer, frame, content-type, and CSP headers are applied
   across the app.
@@ -133,6 +149,8 @@ Table Storage, and Graph configuration described below.
 | `AZURE_CLIENT_SECRET` | No | None | Deprecated runtime secret; preserved only for bootstrap compatibility. |
 | `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<tenant>` | Entra authority base URL. |
 | `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked before TAP creation. |
+| `V2_ADMIN_GROUP_ID` | Live | None | Immutable object ID of the security group authorized for portal admin reset operations. |
+| `V2_USERS_GROUP_ID` | Live | None | Immutable object ID of the security group required for employee, manager, and skip-level participation. |
 | `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
 | `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
 | `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
@@ -208,16 +226,21 @@ those workflows are being updated in the same reviewed infra PR.
 1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
    `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
    high-entropy secrets.
-2. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
-   table-scoped access to the session and v2 request tables.
-3. Grant the runtime identity the Graph app roles used by this flow:
-   `User.Read.All`, `GroupMember.Read.All`,
-   `UserAuthMethod-TAP.ReadWrite.All`, and
-   `UserAuthMethod-Passkey.Read.All`.
-4. Provision and register the dedicated manager OIDC app callback at
-   `/auth/manager/callback`.
-5. Provision the dedicated Verified ID v2 contract and manifest.
-6. Configure ACS Email when live manager notifications should be sent.
+2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to immutable Entra security
+   group object IDs. For the Spaid pilot tenant, the deployment targets are
+   JustJohn-SG `80334aae-af17-4a5a-9bca-046c0df39c15` and NativeUsers-SG
+   `914a7e6f-dcc2-438a-bc02-d58d2eb5e87a`; keep these as deployment
+   configuration, not hardcoded runtime names.
+3. Set `ONBOARDING_STATE_BACKEND=azure-table` and grant the runtime identity
+   table-scoped access to the session and v2 request tables.
+4. Grant the runtime identity the Graph app roles used by this flow:
+   `User.Read.All`, `GroupMember.Read.All`,
+   `UserAuthMethod-TAP.ReadWrite.All`, and
+   `UserAuthMethod-Passkey.Read.All`.
+5. Provision and register the dedicated manager OIDC app callback at
+   `/auth/manager/callback`.
+6. Provision the dedicated Verified ID v2 contract and manifest.
+7. Configure ACS Email when live manager notifications should be sent.
 
 See [`docs/architecture.md`](docs/architecture.md),
 [`docs/job-aids.md`](docs/job-aids.md), and [SECURITY.md](SECURITY.md).
