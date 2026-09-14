@@ -11,13 +11,14 @@ const managerAuthService = require('../src/services/manager-auth-service');
 const onboardingService = require('../src/services/onboarding-v2-service');
 const router = require('../src/routes/v2-manager');
 
-function createApp(seedSession) {
+function createApp(seedSession, store) {
   const app = express();
   app.use(express.urlencoded({ extended: false }));
   app.use(session({
     secret: 'test-session-secret',
     resave: false,
     saveUninitialized: true,
+    store,
   }));
   app.use((req, res, next) => {
     if (typeof seedSession === 'function') {
@@ -175,11 +176,17 @@ test('manager callback treats a session-persistence failure as distinct from an 
     redemptionFailureCalled = true;
   };
 
-  const app = createApp((sessionState) => {
-    // Simulate a session store failure (e.g. a durable store outage)
-    // discovered only after the manager token has already been redeemed.
-    sessionState.regenerate = (cb) => cb(new Error('session store unavailable'));
-  });
+  let attemptedSession = null;
+  class FailingManagerStore extends session.MemoryStore {
+    set(sid, value, callback) {
+      if (value.v2Manager) {
+        attemptedSession = value;
+        return callback(new Error('session store unavailable'));
+      }
+      return super.set(sid, value, callback);
+    }
+  }
+  const app = createApp(null, new FailingManagerStore());
   const server = app.listen(0);
 
   try {
@@ -195,7 +202,11 @@ test('manager callback treats a session-persistence failure as distinct from an 
     assert.equal(response.statusCode, 503);
     assert.equal(redeemInput.requestId, '11111111-2222-3333-4444-555555555555');
     assert.equal(redemptionFailureCalled, false);
+    assert.equal(attemptedSession.v2Manager.requestId, redeemInput.requestId);
+    assert.ok(attemptedSession.v2Csrf.manager);
+    assert.equal(response.headers['set-cookie'], undefined);
     const parsed = JSON.parse(response.body);
+    assert.equal(parsed.view, 'v2-manager-approval');
     assert.match(parsed.model.error, /session could not be saved/);
   } finally {
     await new Promise((resolve) => server.close(resolve));

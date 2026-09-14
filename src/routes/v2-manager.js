@@ -286,14 +286,17 @@ router.post('/auth/manager/callback', async (req, res) => {
         authenticatedAt: new Date().toISOString(),
       };
       getCsrfToken(req, 'manager');
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => err ? reject(err) : resolve());
+      });
     } catch (sessionErr) {
       console.error(
-        '[v2-manager] Manager sign-in succeeded but the session could not be saved.',
-        sessionErr
+        '[v2-manager] Manager sign-in succeeded but the session could not be saved.'
       );
+      req.session = null;
       return res.status(503).render('v2-manager-approval', {
         title: 'Manager Sign-In Unavailable',
-        csrfToken: getCsrfToken(req, 'manager-bootstrap'),
+        csrfToken: '',
         activated: false,
         authenticated: false,
         request: null,
