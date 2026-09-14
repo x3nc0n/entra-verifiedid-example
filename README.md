@@ -1,14 +1,14 @@
-# Microsoft Entra Self-Service Verified ID Onboarding
-
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js 20 LTS](https://img.shields.io/badge/node-20%20LTS-brightgreen.svg)](https://nodejs.org/)
-
+# Microsoft Entra Self-Service Verified ID Onboarding
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fx3nc0n%2Fentra-verifiedid-example%2Fmain%2Fazuredeploy.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js 20 LTS](https://img.shields.io/badge/node-20%20LTS-brightgreen.svg)](https://nodejs.org/)
+
 This Node.js/Express portal now runs the v2 Microsoft Entra Verified ID
 experience for both manager-approved onboarding and self-service recovery.
-
-## Flow overview
-
+
+## Flow overview
+
 ### Employee self-service onboarding
 
 1. The employee submits the directory UPN and employee ID.
@@ -52,13 +52,13 @@ experience for both manager-approved onboarding and self-service recovery.
 
 The legacy v1 invitation-based and pre-v2 flows remain removed from the
 application.
-
-## Runtime routes
-
-| Route | Purpose |
-|-------|---------|
-| `GET /` | Redirect to the canonical onboarding entry point. |
-| `GET /v2/onboarding` | Employee intake and session-bound status UI. |
+
+## Runtime routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET /` | Redirect to the canonical onboarding entry point. |
+| `GET /v2/onboarding` | Employee intake and session-bound status UI. |
 | `GET /v2/onboarding/invite` | Employee confirmation screen for a manager-generated invitation. |
 | `POST /api/v2/onboarding/requests` | Validate directory evidence and create a durable request with a generic response. |
 | `POST /api/v2/onboarding/invitations/activate` | Hash and bind the one-time employee invitation token to a short pre-auth session. |
@@ -91,12 +91,12 @@ application.
 | `GET /v2/passkey` | Display the protected TAP once and direct the user to Security info. |
 | `POST /api/v2/passkey/confirm` | Confirm a newly added Graph FIDO2 method. |
 | `GET /v2/complete` | Finalize the request and destroy the onboarding session. |
-| `GET /health` | Health probe. |
-
-## Security properties
-
-- Manager approval links carry the bearer token only in the URL fragment.
-- The raw manager token is never stored; only its SHA-256 hash is persisted.
+| `GET /health` | Health probe. |
+
+## Security properties
+
+- Manager approval links carry the bearer token only in the URL fragment.
+- The raw manager token is never stored; only its SHA-256 hash is persisted.
 - Employee invitation links also carry a fragment token that is stored only as a
   SHA-256 hash.
 - Requests, rate limits, callback correlation, and state transitions are durable
@@ -121,54 +121,66 @@ application.
 - Recovery revokes all existing FIDO2 methods before replacement passkey setup.
 - Cache-control, referrer, frame, content-type, and CSP headers are applied
   across the app.
-- TAP values are single-use, short-lived, encrypted at rest, displayed once,
-  and cleared after first display.
-- Completion requires Graph to report a newly added FIDO2 method.
-
-## Quick start
-
-```powershell
-npm ci
-$env:DEMO_MODE = 'true'
-npm test
-npm start
-```
-
-Open `http://localhost:3000`.
-
-Demo mode still allows local rendering and tests without live tenant resources.
-A full end-to-end onboarding run requires the live v2 manager OIDC, Verified ID,
-Table Storage, and Graph configuration described below.
-
-## Configuration
-
-| Variable | Required | Default | Purpose |
-|----------|----------|---------|---------|
-| `NODE_ENV` | No | `development` | Runtime environment. |
-| `PORT` | No | `3000` | Express port. |
-| `SESSION_SECRET` | Production | Development placeholder | Session signing secret. |
-| `APP_BASE_URL` | Production | `http://localhost:3000` | Public origin used for approval links and callbacks. |
-| `DEMO_MODE` | No | `false` | Use local simulated Graph and Verified ID responses where supported. |
-| `AZURE_TENANT_ID` | Live | None | Entra tenant GUID. |
-| `AZURE_CLIENT_ID` | Azure UAMI | None | Runtime user-assigned managed identity client ID. |
-| `AZURE_CLIENT_SECRET` | No | None | Deprecated runtime secret; preserved only for bootstrap compatibility. |
-| `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<tenant>` | Entra authority base URL. |
-| `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked before TAP creation. |
+- TAP values are single-use, short-lived, encrypted at rest, displayed once,
+  and cleared after first display.
+- Completion requires Graph to report a newly added FIDO2 method.
+
+## Quick start
+
+```powershell
+npm ci
+$env:DEMO_MODE = 'true'
+npm test
+npm start
+```
+
+Open `http://localhost:3000`.
+
+Demo mode still allows local rendering and tests without live tenant resources.
+A full end-to-end onboarding run requires the live v2 manager OIDC, Verified ID,
+Table Storage, and Graph configuration described below.
+
+To reproduce the browser-specific SameSite=Strict dashboard callback regression
+without real Entra credentials or cloud services, run:
+
+```powershell
+npm run test:browser-dashboard-auth
+```
+
+The harness launches the local Express app plus a fake IdP on a different local
+origin, posts an OIDC `form_post` callback through a real Chromium-family browser
+(Edge, Chrome, Chromium, or `BROWSER_BIN`), and verifies the same-origin callback
+completion loads the authenticated dashboard.
+
+## Configuration
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `NODE_ENV` | No | `development` | Runtime environment. |
+| `PORT` | No | `3000` | Express port. |
+| `SESSION_SECRET` | Production | Development placeholder | Session signing secret. |
+| `APP_BASE_URL` | Production | `http://localhost:3000` | Public origin used for approval links and callbacks. |
+| `DEMO_MODE` | No | `false` | Use local simulated Graph and Verified ID responses where supported. |
+| `AZURE_TENANT_ID` | Live | None | Entra tenant GUID. |
+| `AZURE_CLIENT_ID` | Azure UAMI | None | Runtime user-assigned managed identity client ID. |
+| `AZURE_CLIENT_SECRET` | No | None | Deprecated runtime secret; preserved only for bootstrap compatibility. |
+| `AZURE_AUTHORITY` | No | `https://login.microsoftonline.com/<tenant>` | Entra authority base URL. |
+| `PILOT_GROUP_ID` | Live | None | Dedicated pilot-group object ID rechecked before TAP creation. |
 | `V2_ADMIN_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the admin app role in the manager OIDC Enterprise App. |
 | `V2_USERS_GROUP_ID` | Live | None | Immutable object ID of the security group assigned to the user app role and used for tokenless bootstrap eligibility. |
 | `V2_ADMIN_ROLE_VALUE` | No | `VerifiedId.Onboarding.Admin` | Stable manager OIDC app role value required for portal admin reset operations. |
 | `V2_USER_ROLE_VALUE` | No | `VerifiedId.Onboarding.User` | Stable manager OIDC app role value required for manager dashboard and approval sign-in. |
-| `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
-| `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
-| `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
-| `ONBOARDING_V2_REQUESTS_TABLE` | No | `onboardingV2Requests` | Durable v2 request, rate-limit, and audit table name. |
-| `VC_SERVICE_SCOPE` | No | Request Service default | Verified ID Request Service token scope shared by the v2 endpoints. |
-| `V2_REQUEST_LIFETIME_MINUTES` | No | `1440` | Request validity window. |
-| `V2_MANAGER_TOKEN_LIFETIME_MINUTES` | No | `1440` | Manager approval-token validity window. |
-| `V2_MANAGER_PREAUTH_LIFETIME_MINUTES` | No | `10` | Short pre-auth binding lifetime after approval-token activation. |
-| `V2_MAX_DAILY_REQUESTS_PER_UPN` | No | `3` | Daily employee UPN request limit. |
-| `V2_MAX_DAILY_REQUESTS_PER_IP` | No | `10` | Daily client IP request limit. |
-| `V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE` | No | `3` | Daily immutable employee-object request limit. |
+| `ONBOARDING_STATE_BACKEND` | Live | `memory` | Must be `azure-table` outside local demo mode. |
+| `AZURE_STORAGE_TABLE_ENDPOINT` | Live | None | HTTPS endpoint for the managed-identity-backed Table service. |
+| `ONBOARDING_SESSIONS_TABLE` | No | `onboardingSessions` | Shared Express session table name. |
+| `ONBOARDING_V2_REQUESTS_TABLE` | No | `onboardingV2Requests` | Durable v2 request, rate-limit, and audit table name. |
+| `VC_SERVICE_SCOPE` | No | Request Service default | Verified ID Request Service token scope shared by the v2 endpoints. |
+| `V2_REQUEST_LIFETIME_MINUTES` | No | `1440` | Request validity window. |
+| `V2_MANAGER_TOKEN_LIFETIME_MINUTES` | No | `1440` | Manager approval-token validity window. |
+| `V2_MANAGER_PREAUTH_LIFETIME_MINUTES` | No | `10` | Short pre-auth binding lifetime after approval-token activation. |
+| `V2_MAX_DAILY_REQUESTS_PER_UPN` | No | `3` | Daily employee UPN request limit. |
+| `V2_MAX_DAILY_REQUESTS_PER_IP` | No | `10` | Daily client IP request limit. |
+| `V2_MAX_DAILY_REQUESTS_PER_EMPLOYEE` | No | `3` | Daily immutable employee-object request limit. |
 | `V2_MAX_DAILY_MANAGER_INVITATIONS` | No | `20` | Daily manager-dashboard invitation limit per signed-in manager. |
 | `V2_MAX_EMPLOYEE_INVITE_CONFIRM_ATTEMPTS` | No | `3` | Employee invitation identity-confirmation failure limit before lock. |
 | `V2_MAX_PASSKEY_CONFIRM_ATTEMPTS` | No | `30` | Confirmation retry limit. |
@@ -183,56 +195,56 @@ Table Storage, and Graph configuration described below.
 | `V2_RECOVERY_MAX_VERIFICATION_FAILURES` | No | `3` | Recovery Verified ID validation failure limit. |
 | `V2_RECOVERY_MAX_PASSKEY_CONFIRM_ATTEMPTS` | No | `30` | Recovery replacement-passkey confirmation retry limit. |
 | `V2_TRANSIENT_PROTECTION_KEY` | Live | None | Base64-encoded 32-byte AES-GCM key for transient PIN and TAP protection. |
-| `V2_MANAGER_OIDC_CLIENT_ID` | Live | None | Dedicated single-tenant manager OIDC application client ID. |
-| `V2_MANAGER_OIDC_CLIENT_SECRET` | Live | None | Manager OIDC confidential-client secret. |
-| `V2_MANAGER_OIDC_REDIRECT_URI` | Live | `<APP_BASE_URL>/auth/manager/callback` | HTTPS `form_post` callback. |
-| `V2_VERIFIED_ID_AUTHORITY` | Live | None | Exact tenant Verified ID authority DID. |
-| `V2_VERIFIED_ID_MANIFEST_URL` | Live | None | Dedicated v2 contract manifest URL. |
-| `V2_VERIFIED_ID_CREDENTIAL_TYPE` | Live | None | Dedicated v2 credential type. |
-| `V2_VERIFIED_ID_OBJECT_ID_CLAIM` | Live | None | Object-ID claim path in issued and presented credentials. |
-| `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM` | Live | None | Employee-ID claim path in issued and presented credentials. |
-| `V2_VERIFIED_ID_LINKED_DOMAIN` | Live | None | Exact verified linked domain host name. |
-| `V2_VERIFIED_ID_CALLBACK_API_KEY` | Live | None | Shared callback authentication value. |
-| `V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH` | No | `6` | Issuance PIN length. |
-| `V2_MANAGER_NOTIFICATION_PROVIDER` | No | `noop` | `acs` for live delivery, `noop` for tests. |
-| `V2_ACS_EMAIL_ENDPOINT` | ACS managed identity | None | ACS HTTPS endpoint. Preferred live mode. |
-| `V2_ACS_EMAIL_SENDER_ADDRESS` | ACS | None | Verified ACS Email sender address. |
-| `V2_ACS_EMAIL_CONNECTION_STRING` | ACS fallback | None | ACS connection string used only when no endpoint is configured. |
-| `TAP_LIFETIME_MINUTES` | No | `60` | TAP validity, always single-use. |
-| `ENTRA_SECURITY_INFO_URL` | No | Microsoft Security info | TAP sign-in and passkey registration destination. |
-| `FIDO2_RP_NAME` | Demo only | `Entra Verified ID Demo` | Local demo relying-party name. |
-| `FIDO2_RP_ID` | Demo only | `localhost` | Local demo relying-party ID. |
-| `FIDO2_ORIGIN` | Demo only | `http://localhost:3000` | Local demo WebAuthn origin. |
-| `KEY_VAULT_URL` | No | None | Preserved for deployment contract alignment and secret wiring. |
-
-## Azure delivery notes
-
-Application code now assumes the v2 self-service flow is always on. The current
-infrastructure and deployment workflows may still set legacy environment values.
-Those legacy values are now orphaned application-side and should be cleaned up
-by infra owners in a follow-up change:
-
-- `ASSURANCE_MODE`
-- `SELF_SERVICE_V2_ENABLED`
-- `ONBOARDING_APPROVAL_API_KEY`
-- `ONBOARDING_INVITATIONS_TABLE`
-- `INVITATION_LIFETIME_MINUTES`
-- `INVITATION_MAX_ATTEMPTS`
-- `VC_VERIFIER_AUTHORITY`
-- `VC_CREDENTIAL_TYPE`
-- `VC_ACCEPTED_ISSUERS`
-- `VC_USER_PRINCIPAL_NAME_CLAIM`
-- `VC_EMPLOYEE_ID_CLAIM`
-- `VC_CALLBACK_API_KEY`
-
-Do not remove them from `.github/workflows/` in application-only changes unless
-those workflows are being updated in the same reviewed infra PR.
-
-## Required live integration work
-
-1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
-   `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
-   high-entropy secrets.
+| `V2_MANAGER_OIDC_CLIENT_ID` | Live | None | Dedicated single-tenant manager OIDC application client ID. |
+| `V2_MANAGER_OIDC_CLIENT_SECRET` | Live | None | Manager OIDC confidential-client secret. |
+| `V2_MANAGER_OIDC_REDIRECT_URI` | Live | `<APP_BASE_URL>/auth/manager/callback` | HTTPS `form_post` callback. |
+| `V2_VERIFIED_ID_AUTHORITY` | Live | None | Exact tenant Verified ID authority DID. |
+| `V2_VERIFIED_ID_MANIFEST_URL` | Live | None | Dedicated v2 contract manifest URL. |
+| `V2_VERIFIED_ID_CREDENTIAL_TYPE` | Live | None | Dedicated v2 credential type. |
+| `V2_VERIFIED_ID_OBJECT_ID_CLAIM` | Live | None | Object-ID claim path in issued and presented credentials. |
+| `V2_VERIFIED_ID_EMPLOYEE_ID_CLAIM` | Live | None | Employee-ID claim path in issued and presented credentials. |
+| `V2_VERIFIED_ID_LINKED_DOMAIN` | Live | None | Exact verified linked domain host name. |
+| `V2_VERIFIED_ID_CALLBACK_API_KEY` | Live | None | Shared callback authentication value. |
+| `V2_VERIFIED_ID_ISSUANCE_PIN_LENGTH` | No | `6` | Issuance PIN length. |
+| `V2_MANAGER_NOTIFICATION_PROVIDER` | No | `noop` | `acs` for live delivery, `noop` for tests. |
+| `V2_ACS_EMAIL_ENDPOINT` | ACS managed identity | None | ACS HTTPS endpoint. Preferred live mode. |
+| `V2_ACS_EMAIL_SENDER_ADDRESS` | ACS | None | Verified ACS Email sender address. |
+| `V2_ACS_EMAIL_CONNECTION_STRING` | ACS fallback | None | ACS connection string used only when no endpoint is configured. |
+| `TAP_LIFETIME_MINUTES` | No | `60` | TAP validity, always single-use. |
+| `ENTRA_SECURITY_INFO_URL` | No | Microsoft Security info | TAP sign-in and passkey registration destination. |
+| `FIDO2_RP_NAME` | Demo only | `Entra Verified ID Demo` | Local demo relying-party name. |
+| `FIDO2_RP_ID` | Demo only | `localhost` | Local demo relying-party ID. |
+| `FIDO2_ORIGIN` | Demo only | `http://localhost:3000` | Local demo WebAuthn origin. |
+| `KEY_VAULT_URL` | No | None | Preserved for deployment contract alignment and secret wiring. |
+
+## Azure delivery notes
+
+Application code now assumes the v2 self-service flow is always on. The current
+infrastructure and deployment workflows may still set legacy environment values.
+Those legacy values are now orphaned application-side and should be cleaned up
+by infra owners in a follow-up change:
+
+- `ASSURANCE_MODE`
+- `SELF_SERVICE_V2_ENABLED`
+- `ONBOARDING_APPROVAL_API_KEY`
+- `ONBOARDING_INVITATIONS_TABLE`
+- `INVITATION_LIFETIME_MINUTES`
+- `INVITATION_MAX_ATTEMPTS`
+- `VC_VERIFIER_AUTHORITY`
+- `VC_CREDENTIAL_TYPE`
+- `VC_ACCEPTED_ISSUERS`
+- `VC_USER_PRINCIPAL_NAME_CLAIM`
+- `VC_EMPLOYEE_ID_CLAIM`
+- `VC_CALLBACK_API_KEY`
+
+Do not remove them from `.github/workflows/` in application-only changes unless
+those workflows are being updated in the same reviewed infra PR.
+
+## Required live integration work
+
+1. Provide `SESSION_SECRET`, `V2_TRANSIENT_PROTECTION_KEY`,
+   `V2_MANAGER_OIDC_CLIENT_SECRET`, and `V2_VERIFIED_ID_CALLBACK_API_KEY` as
+   high-entropy secrets.
 2. Set `V2_ADMIN_GROUP_ID` and `V2_USERS_GROUP_ID` to immutable Entra security
    group object IDs. For the Spaid pilot tenant, the deployment targets are
    JustJohn-SG `80334aae-af17-4a5a-9bca-046c0df39c15` and NativeUsers-SG
@@ -258,10 +270,10 @@ those workflows are being updated in the same reviewed infra PR.
    `/auth/manager/callback`.
 7. Provision the dedicated Verified ID v2 contract and manifest.
 8. Configure ACS Email when live manager notifications should be sent.
-
-See [`docs/architecture.md`](docs/architecture.md),
-[`docs/job-aids.md`](docs/job-aids.md), and [SECURITY.md](SECURITY.md).
-
-## License
-
-[MIT](LICENSE)
+
+See [`docs/architecture.md`](docs/architecture.md),
+[`docs/job-aids.md`](docs/job-aids.md), and [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE)
