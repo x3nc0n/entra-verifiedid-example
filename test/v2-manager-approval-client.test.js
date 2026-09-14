@@ -18,6 +18,9 @@ async function run({ hash = '', statusPresent = true, fetchImpl } = {}) {
   let timeout;
   let timeoutMs;
   let cleared = false;
+  const listeners = {};
+  const location = { hash, pathname: '/v2/manager/approval',
+    replace: (url) => redirects.push(url) };
   vm.runInNewContext(script, {
     document: {
       getElementById: (id) => id === 'managerApprovalPanel'
@@ -26,9 +29,9 @@ async function run({ hash = '', statusPresent = true, fetchImpl } = {}) {
       querySelector: () => ({ content: 'csrf-test' }),
     },
     window: {
-      location: { hash, pathname: '/v2/manager/approval',
-        replace: (url) => redirects.push(url) },
-      history: { replaceState: () => { scrubbed = true; } },
+      location,
+      history: { replaceState: () => { scrubbed = true; location.hash = ''; } },
+      addEventListener: (event, callback) => { listeners[event] = callback; },
     },
     URLSearchParams,
     AbortController,
@@ -40,7 +43,8 @@ async function run({ hash = '', statusPresent = true, fetchImpl } = {}) {
     },
   });
   await new Promise(setImmediate);
-  return { status, calls, redirects, timeout, timeoutMs, isCleared: () => cleared };
+  return { status, calls, redirects, timeout, timeoutMs, isCleared: () => cleared,
+    changeHash: (hash) => { location.hash = hash; listeners.hashchange(); } };
 }
 
 test('bare approval URL exits loading without making a request', async () => {
@@ -104,4 +108,28 @@ test('hung activation aborts after 15 seconds and stops loading', async () => {
   assert.equal(result.calls.length, 1);
   assert.equal(result.redirects.length, 0);
   assert.equal(result.isCleared(), true);
+});
+
+test('token-bearing same-document navigation starts activation', async () => {
+  const result = await run();
+  assert.equal(result.calls.length, 0);
+  result.changeHash('#token=new-link');
+  await new Promise(setImmediate);
+  assert.equal(result.calls.length, 1);
+  assert.equal(JSON.parse(result.calls[0].options.body).token, 'new-link');
+  assert.deepEqual(result.redirects, ['/auth/manager/signin']);
+});
+
+test('hash changes do not duplicate an in-flight activation', async () => {
+  let finish;
+  const result = await run({
+    hash: '#token=first-link',
+    fetchImpl: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  result.changeHash('#token=first-link');
+  result.changeHash('#token=first-link');
+  assert.equal(result.calls.length, 1);
+  finish({ ok: true });
+  await new Promise(setImmediate);
+  assert.deepEqual(result.redirects, ['/auth/manager/signin']);
 });

@@ -18,6 +18,7 @@
     }
     window.history.replaceState(null, '', window.location.pathname);
     if (!status) return;
+    status.textContent = 'Validating the approval link...';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     let response;
@@ -75,8 +76,18 @@
   document.getElementById('managerReject')
     ?.addEventListener('click', () => decide('reject'));
 
-  activateToken().catch(() => {
-    const status = document.getElementById('managerActivationStatus');
-    if (status) status.textContent = 'The manager approval link could not be validated.';
-  });
+  let activationPending = false;
+  function handleActivation() {
+    if (activationPending) return;
+    activationPending = true;
+    activateToken().catch(() => {
+      const status = document.getElementById('managerActivationStatus');
+      if (status) status.textContent = 'The manager approval link could not be validated.';
+    }).finally(() => {
+      activationPending = false;
+    });
+  }
+
+  window.addEventListener('hashchange', handleActivation);
+  handleActivation();
 })();
