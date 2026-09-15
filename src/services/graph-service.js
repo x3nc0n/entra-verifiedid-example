@@ -34,6 +34,10 @@ function authorizationHeaders(accessToken) {
   return { Authorization: ['Bearer', accessToken].join(' ') };
 }
 
+function escapeOData(value) {
+  return String(value).replace(/'/g, "''");
+}
+
 async function getUserByPrincipalName(userPrincipalName) {
   if (config.demoMode) {
     return {
@@ -85,6 +89,43 @@ async function getUserById(userId) {
     if (err.response?.status === 404) return null;
     throw err;
   }
+}
+
+async function getUserByEmployeeId(employeeId, dependencies = {}) {
+  if (config.demoMode) {
+    return {
+      id: 'demo-user-id-00000000-0000-0000-0000-000000000001',
+      displayName: 'Demo User',
+      userPrincipalName: 'demo.user@tenant.example',
+      employeeId,
+      accountEnabled: true,
+    };
+  }
+
+  const token = await (dependencies.getAccessToken || getAccessToken)();
+  const get = dependencies.get || axios.get.bind(axios);
+  const normalizedEmployeeId = String(employeeId || '').trim();
+  const response = await get(
+    `${config.graph.baseUrl}/v1.0/users`,
+    {
+      params: {
+        $select: 'id,displayName,userPrincipalName,employeeId,accountEnabled',
+        $filter: `employeeId eq '${escapeOData(normalizedEmployeeId)}'`,
+        $top: 2,
+      },
+      headers: authorizationHeaders(token),
+    }
+  );
+  const matches = (response.data.value || []).filter((user) =>
+    String(user.employeeId || '').trim().toLowerCase() ===
+      normalizedEmployeeId.toLowerCase()
+  );
+  if (matches.length > 1) {
+    const err = new Error('Multiple employees matched the supplied employee ID.');
+    err.code = 'employee_id_ambiguous';
+    throw err;
+  }
+  return matches[0] || null;
 }
 
 async function getManagerByUserId(userId, dependencies = {}) {
@@ -469,6 +510,7 @@ module.exports = {
   getAccessToken,
   getUserByPrincipalName,
   getUserById,
+  getUserByEmployeeId,
   getManagerByUserId,
   getEmployeeWithManager,
   listDirectReports,

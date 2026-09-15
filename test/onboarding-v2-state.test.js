@@ -189,6 +189,38 @@ test('successful redemption clears stale manager auth failure metadata', async (
   assert.equal(redeemed.lastManagerAuthFailureAt, undefined);
 });
 
+test('admin cancel releases the employee lock while unblock keeps the request active', async () => {
+  const created = await service.createRequest({
+    tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    employee,
+    manager,
+    employeeIdHash: hashNormalized(employee.employeeId),
+  });
+  const before = await repository.getRequest(created.record.requestId);
+
+  const unblocked = await service.adminResetRequest(created.record.requestId, {
+    action: 'unblock',
+    reason: 'Reset the request to resume testing.',
+    etag: String(before.etag),
+    adminObjectId: 'admin-oid',
+  });
+  assert.equal(unblocked.state, 'requested');
+  assert.equal(
+    repository.employeeLocks.get(employee.id.toLowerCase()).requestId,
+    created.record.requestId
+  );
+
+  const current = await repository.getRequest(created.record.requestId);
+  const cancelled = await service.adminResetRequest(created.record.requestId, {
+    action: 'cancel',
+    reason: 'Cancel the stuck request to release the employee lock.',
+    etag: String(current.etag),
+    adminObjectId: 'admin-oid',
+  });
+  assert.equal(cancelled.state, 'admin-cancelled');
+  assert.equal(repository.employeeLocks.get(employee.id.toLowerCase()), undefined);
+});
+
 test('persists manager PKCE correlation encrypted and clears it on redemption', async () => {
   const created = await service.createRequest({
     tenantId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',

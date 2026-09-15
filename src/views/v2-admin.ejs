@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+  <main class="main-content">
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">Portal Admin</h1>
+        <p class="page-subtitle">
+          Find current onboarding or recovery requests for a user and apply a scoped reset with the current ETag.
+        </p>
+      </div>
+
+      <section class="card">
+        <div class="alert alert-info">
+          Signed in as <strong><%= adminDisplayName || adminUpn %></strong>
+          <% if (adminUpn) { %>(<%= adminUpn %>)<% } %>
+        </div>
+
+        <form id="adminLookupForm">
+          <div class="two-col">
+            <div class="form-group">
+              <label class="form-label" for="upn">Employee UPN</label>
+              <input id="upn" name="upn" class="form-input" type="email" autocomplete="off" placeholder="newhire@tenant.example">
+              <p class="form-hint">Provide a UPN or an employee ID.</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="employeeId">Employee ID</label>
+              <input id="employeeId" name="employeeId" class="form-input" type="text" autocomplete="off" placeholder="EMP-1001">
+              <p class="form-hint">Leave the other field blank to avoid ambiguous lookups.</p>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Find requests</button>
+            <a class="btn btn-secondary" href="/v2/manager/dashboard">Return to manager dashboard</a>
+          </div>
+        </form>
+
+        <p id="adminLookupStatus" class="mt-md" aria-live="polite"></p>
+      </section>
+
+      <section id="adminLookupResults" class="mt-md hidden" aria-live="polite"></section>
+    </div>
+  </main>
+  <%- include('partials/footer') %>
+  <script src="/js/v2-admin.js" defer></script>
+</body>
+</html>

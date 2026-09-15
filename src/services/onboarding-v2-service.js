@@ -185,6 +185,15 @@ class InMemoryV2Repository {
       );
   }
 
+  async findRequestsForEmployee(employeeObjectId) {
+    const normalized = normalizeIdentifier(employeeObjectId);
+    return [...this.requests.values()]
+      .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
+      .filter((record) =>
+        normalizeIdentifier(record.employeeObjectId) === normalized
+      );
+  }
+
   async incrementRateLimit(key, limit, expiresAt) {
     const current = this.rateLimits.get(key);
     if (!current || Date.now() >= Date.parse(current.expiresAt)) {
@@ -395,6 +404,21 @@ class AzureTableV2Repository {
           results.push(record);
         }
       }
+    }
+    return results;
+  }
+
+  async findRequestsForEmployee(employeeObjectId) {
+    const results = [];
+    const entities = this.getClient().listEntities({
+      queryOptions: {
+        filter:
+          `PartitionKey eq '${REQUEST_PARTITION}' and ` +
+          `employeeObjectId eq '${escapeOData(employeeObjectId)}'`,
+      },
+    });
+    for await (const entity of entities) {
+      results.push(withoutMetadata(entity));
     }
     return results;
   }
@@ -944,6 +968,17 @@ function createOnboardingV2Service(repository) {
     return repository.findRequestsForApprover(approverObjectId);
   }
 
+  async function findRequestsForEmployee(employeeObjectId) {
+    const requests = await repository.findRequestsForEmployee(employeeObjectId);
+    return requests.sort((left, right) => {
+      const leftTerminal = TERMINAL_STATES.has(left.state);
+      const rightTerminal = TERMINAL_STATES.has(right.state);
+      if (leftTerminal !== rightTerminal) return leftTerminal ? 1 : -1;
+      return Date.parse(right.updatedAt || right.createdAt || 0) -
+        Date.parse(left.updatedAt || left.createdAt || 0);
+    });
+  }
+
   async function escalateToSkipManager(requestId, skipManager) {
     const managerToken = randomOpaqueToken();
     const updated = await updateRequest(
@@ -1432,6 +1467,7 @@ function createOnboardingV2Service(repository) {
     confirmEmployeeInvite,
     decide,
     listRequestsForApprover,
+    findRequestsForEmployee,
     escalateToSkipManager,
     adminResetRequest,
     beginIssuance,
