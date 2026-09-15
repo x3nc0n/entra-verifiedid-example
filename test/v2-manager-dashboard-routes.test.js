@@ -230,6 +230,7 @@ test('bootstrap eligibility checks use configured direct security group IDs', as
 test('admin reset uses portal admin app role session and forwards scoped ETag reset', async () => {
   const originals = {
     adminResetRequest: onboardingService.adminResetRequest,
+    loadRequest: onboardingService.loadRequest,
   };
   let resetInput = null;
   onboardingService.adminResetRequest = async (requestId, input) => {
@@ -240,6 +241,12 @@ test('admin reset uses portal admin app role session and forwards scoped ETag re
       updatedAt: '2026-09-14T12:54:49.352-05:00',
     };
   };
+  onboardingService.loadRequest = async (requestId) => ({
+    requestId,
+    state: 'requested',
+    updatedAt: '2026-09-14T12:54:49.352-05:00',
+    etag: 'etag-2',
+  });
 
   const app = createApp((sessionState) => {
     sessionState.v2PortalAdmin = {
@@ -269,6 +276,8 @@ test('admin reset uses portal admin app role session and forwards scoped ETag re
       }
     );
     assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.etag, 'etag-2');
     assert.deepEqual(resetInput, {
       requestId: 'request-1',
       input: {
@@ -282,6 +291,145 @@ test('admin reset uses portal admin app role session and forwards scoped ETag re
     await new Promise((resolve) => server.close(resolve));
     Object.assign(onboardingService, {
       adminResetRequest: originals.adminResetRequest,
+      loadRequest: originals.loadRequest,
     });
+  }
+});
+
+test('admin request lookup requires an active portal admin session', async () => {
+  const app = createApp((sessionState) => {
+    sessionState.v2Csrf = { 'portal-admin': 'csrf-token' };
+  });
+  const server = app.listen(0);
+
+  try {
+    const response = await send(
+      server,
+      'GET',
+      '/api/v2/admin/requests/lookup?upn=newhire%40spaid.family'
+    );
+    assert.equal(response.statusCode, 403);
+    assert.match(response.body, /portal administrator app role is required/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('admin request lookup returns onboarding and recovery requests for a resolved employee', async () => {
+  const originals = {
+    getUserByPrincipalName: graphService.getUserByPrincipalName,
+    findRequestsForEmployee: onboardingService.findRequestsForEmployee,
+    recoveryFindRequestsForEmployee: require('../src/services/recovery-v2-service').findRequestsForEmployee,
+  };
+  const recoveryService = require('../src/services/recovery-v2-service');
+  graphService.getUserByPrincipalName = async () => ({
+    id: 'employee-oid',
+    displayName: 'New Hire',
+    userPrincipalName: 'newhire@spaid.family',
+  });
+  onboardingService.findRequestsForEmployee = async () => [{
+    requestId: 'onboarding-request',
+    initiationMode: 'employee-self-service',
+    state: 'manager-notified',
+    etag: 'etag-onboarding',
+    createdAt: '2026-09-14T10:00:00.000Z',
+    updatedAt: '2026-09-15T10:00:00.000Z',
+    employeeDisplayName: 'New Hire',
+    employeeUserPrincipalName: 'newhire@spaid.family',
+  }];
+  recoveryService.findRequestsForEmployee = async () => [{
+    requestId: 'recovery-request',
+    initiationMode: 'employee-self-service',
+    state: 'complete',
+    etag: 'etag-recovery',
+    createdAt: '2026-09-12T10:00:00.000Z',
+    updatedAt: '2026-09-13T10:00:00.000Z',
+    employeeDisplayName: 'New Hire',
+    employeeUserPrincipalName: 'newhire@spaid.family',
+  }];
+
+  const app = createApp((sessionState) => {
+    sessionState.v2PortalAdmin = {
+      adminObjectId: 'admin-oid',
+      tenantId: 'tenant-id',
+      roles: [config.selfServiceV2.authorization.adminRoleValue],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+  });
+  const server = app.listen(0);
+
+  try {
+    const response = await send(
+      server,
+      'GET',
+      '/api/v2/admin/requests/lookup?upn=newhire%40spaid.family'
+    );
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.employee.userPrincipalName, 'newhire@spaid.family');
+    assert.deepEqual(body.requests.map((request) => request.requestId), [
+      'onboarding-request',
+      'recovery-request',
+    ]);
+    assert.equal(body.requests[0].etag, 'etag-onboarding');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    Object.assign(graphService, {
+      getUserByPrincipalName: originals.getUserByPrincipalName,
+    });
+    Object.assign(onboardingService, {
+      findRequestsForEmployee: originals.findRequestsForEmployee,
+    });
+    recoveryService.findRequestsForEmployee = originals.recoveryFindRequestsForEmployee;
+  }
+});
+
+test('admin reset still requires CSRF and rejects non-admin sessions', async () => {
+  const app = createApp((sessionState) => {
+    sessionState.v2PortalAdmin = {
+      adminObjectId: 'admin-oid',
+      tenantId: 'tenant-id',
+      roles: [config.selfServiceV2.authorization.userRoleValue],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    sessionState.v2Csrf = { 'portal-admin': 'csrf-token' };
+  });
+  const server = app.listen(0);
+
+  try {
+    const missingCsrf = await send(
+      server,
+      'POST',
+      '/api/v2/admin/requests/onboarding/request-1/reset',
+      {
+        headers: { 'if-match': 'etag-1' },
+        body: {
+          action: 'cancel',
+          reason: 'Need to clear a stuck onboarding request.',
+        },
+      }
+    );
+    assert.equal(missingCsrf.statusCode, 403);
+    assert.match(missingCsrf.body, /request could not be validated/i);
+
+    const nonAdmin = await send(
+      server,
+      'POST',
+      '/api/v2/admin/requests/onboarding/request-1/reset',
+      {
+        headers: {
+          'x-csrf-token': 'csrf-token',
+          'if-match': 'etag-1',
+        },
+        body: {
+          action: 'cancel',
+          reason: 'Need to clear a stuck onboarding request.',
+        },
+      }
+    );
+    assert.equal(nonAdmin.statusCode, 403);
+    assert.match(nonAdmin.body, /portal administrator app role is required/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });

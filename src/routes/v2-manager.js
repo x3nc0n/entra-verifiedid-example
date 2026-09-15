@@ -68,6 +68,87 @@ function requestSummary(request, requestKind = 'onboarding') {
   };
 }
 
+function sortAdminLookupRequests(left, right) {
+  const terminalStates = new Set(['admin-cancelled', 'complete', 'expired', 'locked']);
+  const leftTerminal = terminalStates.has(left.state) ||
+    left.state === 'manager-rejected';
+  const rightTerminal = terminalStates.has(right.state) ||
+    right.state === 'manager-rejected';
+  if (leftTerminal !== rightTerminal) return leftTerminal ? 1 : -1;
+  return Date.parse(right.updatedAt || right.createdAt || 0) -
+    Date.parse(left.updatedAt || left.createdAt || 0);
+}
+
+function adminLookupSummary(request, requestKind) {
+  return {
+    requestId: request.requestId,
+    requestKind,
+    initiationMode: request.initiationMode,
+    state: request.state,
+    etag: request.etag,
+    updatedAt: request.updatedAt,
+    createdAt: request.createdAt,
+    employeeDisplayName: request.employeeDisplayName,
+    employeeUserPrincipalName: request.employeeUserPrincipalName,
+    notificationStatus: request.notificationStatus,
+  };
+}
+
+function trimmedQueryValue(value) {
+  return String(value || '').trim();
+}
+
+async function resolveAdminLookupEmployee(req) {
+  const upn = trimmedQueryValue(req.query.upn);
+  const employeeId = trimmedQueryValue(req.query.employeeId);
+  if (!upn && !employeeId) {
+    throw new onboardingService.V2StateError(
+      'Provide either an employee UPN or employee ID.',
+      'lookup_required',
+      400
+    );
+  }
+  if (upn && employeeId) {
+    throw new onboardingService.V2StateError(
+      'Search by employee UPN or employee ID, but not both at once.',
+      'lookup_ambiguous',
+      400
+    );
+  }
+  if (upn) {
+    const employee = await graphService.getUserByPrincipalName(upn);
+    if (!employee?.id) {
+      throw new onboardingService.V2StateError(
+        'No employee matched the provided user principal name.',
+        'employee_not_found',
+        404
+      );
+    }
+    return employee;
+  }
+
+  try {
+    const employee = await graphService.getUserByEmployeeId(employeeId);
+    if (!employee?.id) {
+      throw new onboardingService.V2StateError(
+        'No employee matched the provided employee ID.',
+        'employee_not_found',
+        404
+      );
+    }
+    return employee;
+  } catch (err) {
+    if (err.code === 'employee_id_ambiguous') {
+      throw new onboardingService.V2StateError(
+        'Multiple employees matched the provided employee ID.',
+        'employee_id_ambiguous',
+        409
+      );
+    }
+    throw err;
+  }
+}
+
 async function loadManagerAuthFlow(state) {
   try {
     const flow = await onboardingService.loadManagerAuthFlow(state);
@@ -747,13 +828,45 @@ router.get('/v2/admin', (req, res) => {
       actionLabel: 'Sign in as administrator',
     });
   }
-  return res.render('status', {
+  return res.render('v2-admin', {
     title: 'Portal Admin',
-    heading: 'Portal administrator operations',
-    message: 'Use the scoped admin reset API with a request ID, request kind, If-Match ETag, action, and reason.',
-    actionHref: '/v2/manager/dashboard',
-    actionLabel: 'Return to manager dashboard',
+    csrfToken: getCsrfToken(req, 'portal-admin'),
+    adminDisplayName: req.session.v2PortalAdmin.displayName,
+    adminUpn: req.session.v2PortalAdmin.userPrincipalName,
   });
+});
+
+router.get('/api/v2/admin/requests/lookup', async (req, res) => {
+  const adminSession = req.session.v2PortalAdmin;
+  if (!adminSessionIsActive(adminSession)) {
+    delete req.session.v2PortalAdmin;
+    return res.status(403).json({ error: 'Portal administrator app role is required.' });
+  }
+
+  try {
+    const employee = await resolveAdminLookupEmployee(req);
+    const [onboardingRequests, recoveryRequests] = await Promise.all([
+      onboardingService.findRequestsForEmployee(employee.id),
+      recoveryService.findRequestsForEmployee(employee.id),
+    ]);
+    const requests = [
+      ...onboardingRequests.map((request) => adminLookupSummary(request, 'onboarding')),
+      ...recoveryRequests.map((request) => adminLookupSummary(request, 'recovery')),
+    ].sort(sortAdminLookupRequests);
+    return res.json({
+      employee: {
+        displayName: employee.displayName || null,
+        userPrincipalName: employee.userPrincipalName || null,
+      },
+      requests,
+    });
+  } catch (err) {
+    return res.status(err.status || 503).json({
+      error: err.status === 404
+        ? err.message
+        : 'The administrator lookup could not be completed.',
+    });
+  }
 });
 
 router.post(
@@ -778,11 +891,13 @@ router.post(
         etag: req.get('if-match'),
         adminObjectId: adminSession.adminObjectId,
       });
+      const current = await service.loadRequest(req.params.requestId);
       return res.json({
         requestId: updated.requestId,
         requestKind: req.params.requestKind,
-        state: updated.state,
-        updatedAt: updated.updatedAt,
+        state: current.state,
+        updatedAt: current.updatedAt,
+        etag: current.etag,
       });
     } catch (err) {
       return res.status(err.code === 'concurrency' ? 412 : err.status || 409).json({

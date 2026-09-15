@@ -131,6 +131,15 @@ class InMemoryRecoveryV2Repository {
       );
   }
 
+  async findRequestsForEmployee(employeeObjectId) {
+    const normalized = normalizeIdentifier(employeeObjectId);
+    return [...this.requests.values()]
+      .map(({ version, ...record }) => ({ ...record, etag: String(version) }))
+      .filter((record) =>
+        normalizeIdentifier(record.employeeObjectId) === normalized
+      );
+  }
+
   async incrementRateLimit(key, limit, expiresAt) {
     const current = this.rateLimits.get(key);
     if (!current || Date.now() >= Date.parse(current.expiresAt)) {
@@ -293,6 +302,21 @@ class AzureTableRecoveryV2Repository {
           results.push(record);
         }
       }
+    }
+    return results;
+  }
+
+  async findRequestsForEmployee(employeeObjectId) {
+    const results = [];
+    const entities = this.getClient().listEntities({
+      queryOptions: {
+        filter:
+          `PartitionKey eq '${REQUEST_PARTITION}' and ` +
+          `employeeObjectId eq '${escapeOData(employeeObjectId)}'`,
+      },
+    });
+    for await (const entity of entities) {
+      results.push(withoutMetadata(entity));
     }
     return results;
   }
@@ -1006,6 +1030,15 @@ function createRecoveryV2Service(repository) {
     escalateToSkipManager,
     listRequestsForApprover: (approverObjectId) =>
       repository.findRequestsForApprover(approverObjectId),
+    findRequestsForEmployee: (employeeObjectId) =>
+      repository.findRequestsForEmployee(employeeObjectId)
+        .then((requests) => requests.sort((left, right) => {
+          const leftTerminal = TERMINAL_STATES.has(left.state);
+          const rightTerminal = TERMINAL_STATES.has(right.state);
+          if (leftTerminal !== rightTerminal) return leftTerminal ? 1 : -1;
+          return Date.parse(right.updatedAt || right.createdAt || 0) -
+            Date.parse(left.updatedAt || left.createdAt || 0);
+        })),
     beginPresentation,
     attachPresentationRequest,
     failPresentationRequest,
